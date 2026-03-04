@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { Result } from "better-result";
+import { ProviderRequestError } from "../errors.js";
 import type { LLMMessage, LLMProvider, LLMResponse } from "./types.js";
 
 export class OpenAIProvider implements LLMProvider {
@@ -11,31 +13,33 @@ export class OpenAIProvider implements LLMProvider {
     this.client = new OpenAI({ apiKey });
   }
 
-  async complete(messages: LLMMessage[]): Promise<LLMResponse> {
-    const start = Date.now();
+  async complete(messages: LLMMessage[]): Promise<Result<LLMResponse, ProviderRequestError>> {
+    return Result.tryPromise({
+      try: async () => {
+        const start = Date.now();
+        const response = await this.client.chat.completions.create({
+          model: this.model,
+          messages: messages.map((m) => ({ role: m.role, content: m.content })),
+          max_tokens: 4096,
+        });
 
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      max_tokens: 4096,
-    });
-
-    const latency_ms = Date.now() - start;
-    const choice = response.choices[0];
-    const content = choice?.message?.content ?? "";
-
-    return {
-      content,
-      usage: {
-        input_tokens: response.usage?.prompt_tokens ?? 0,
-        output_tokens: response.usage?.completion_tokens ?? 0,
-        total_tokens: response.usage?.total_tokens ?? 0,
+        return {
+          content: response.choices[0]?.message?.content ?? "",
+          usage: {
+            input_tokens: response.usage?.prompt_tokens ?? 0,
+            output_tokens: response.usage?.completion_tokens ?? 0,
+            total_tokens: response.usage?.total_tokens ?? 0,
+          },
+          latency_ms: Date.now() - start,
+          model: response.model,
+        };
       },
-      latency_ms,
-      model: response.model,
-    };
+      catch: (cause) =>
+        new ProviderRequestError({
+          message: `OpenAI API request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          provider: "openai",
+          cause,
+        }),
+    });
   }
 }

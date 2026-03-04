@@ -2,6 +2,7 @@
   "name": "skill-lint",
   "version": "1.0.0",
   "description": "GitHub Action that evaluates, benchmarks, and refines agent skills in PRs",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
@@ -23,16 +24,17 @@
     "@actions/core": "^1.10.1",
     "@actions/github": "^6.0.0",
     "@anthropic-ai/sdk": "^0.39.0",
+    "better-result": "^2.7.0",
+    "gray-matter": "^4.0.3",
     "openai": "^4.77.0",
     "yaml": "^2.7.0",
-    "gray-matter": "^4.0.3",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@vercel/ncc": "^0.38.3",
+    "eslint": "^9.16.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0",
-    "eslint": "^9.16.0"
+    "vitest": "^2.1.0"
   }
 }

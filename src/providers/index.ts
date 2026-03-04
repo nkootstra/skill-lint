@@ -1,5 +1,7 @@
 import * as core from "@actions/core";
+import { Result } from "better-result";
 import type { ProviderConfig } from "../config/schema.js";
+import { ApiKeyMissingError } from "../errors.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { ClaudeCodeProvider } from "./claude-code.js";
 import { LiteLLMProvider } from "./litellm.js";
@@ -8,50 +10,44 @@ import type { LLMProvider } from "./types.js";
 
 export { type LLMMessage, type LLMProvider, type LLMResponse } from "./types.js";
 
-export function createProvider(config: ProviderConfig): LLMProvider {
+export function createProvider(
+  config: ProviderConfig,
+): Result<LLMProvider, ApiKeyMissingError> {
   switch (config.type) {
     case "anthropic": {
-      const apiKey =
-        core.getInput("anthropic_api_key") ||
-        process.env[config.api_key_env] ||
-        process.env.ANTHROPIC_API_KEY;
+      const apiKey = resolveKey("anthropic_api_key", config.api_key_env, "ANTHROPIC_API_KEY");
       if (!apiKey) {
-        throw new Error(
-          `Anthropic API key not found. Set it via the anthropic_api_key input or ${config.api_key_env} environment variable.`,
-        );
+        return Result.err(new ApiKeyMissingError({
+          message: "Anthropic API key not found",
+          provider: "anthropic",
+          envVar: config.api_key_env,
+        }));
       }
-      return new AnthropicProvider(apiKey, config.model);
+      return Result.ok(new AnthropicProvider(apiKey, config.model));
     }
 
     case "openai": {
-      const apiKey =
-        core.getInput("openai_api_key") ||
-        process.env[config.api_key_env] ||
-        process.env.OPENAI_API_KEY;
+      const apiKey = resolveKey("openai_api_key", config.api_key_env, "OPENAI_API_KEY");
       if (!apiKey) {
-        throw new Error(
-          `OpenAI API key not found. Set it via the openai_api_key input or ${config.api_key_env} environment variable.`,
-        );
+        return Result.err(new ApiKeyMissingError({
+          message: "OpenAI API key not found",
+          provider: "openai",
+          envVar: config.api_key_env,
+        }));
       }
-      return new OpenAIProvider(apiKey, config.model);
+      return Result.ok(new OpenAIProvider(apiKey, config.model));
     }
 
     case "litellm": {
-      const apiKey =
-        core.getInput("litellm_api_key") ||
-        process.env[config.api_key_env] ||
-        process.env.LITELLM_API_KEY ||
-        "";
-      return new LiteLLMProvider(apiKey, config.model, config.api_base);
+      const apiKey = resolveKey("litellm_api_key", config.api_key_env, "LITELLM_API_KEY");
+      return Result.ok(new LiteLLMProvider(apiKey ?? "", config.model, config.api_base));
     }
 
-    case "claude-code": {
-      return new ClaudeCodeProvider(config.cli_path, config.model);
-    }
-
-    default: {
-      const _exhaustive: never = config;
-      throw new Error(`Unknown provider: ${(_exhaustive as ProviderConfig).type}`);
-    }
+    case "claude-code":
+      return Result.ok(new ClaudeCodeProvider(config.cli_path, config.model));
   }
+}
+
+function resolveKey(inputName: string, envName: string, fallbackEnv: string): string | undefined {
+  return core.getInput(inputName) || process.env[envName] || process.env[fallbackEnv] || undefined;
 }

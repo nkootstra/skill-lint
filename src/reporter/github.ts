@@ -1,4 +1,6 @@
 import * as github from "@actions/github";
+import { Result } from "better-result";
+import { ReporterError } from "../errors.js";
 import type { SkillEvaluationResult } from "../skills/types.js";
 import { formatComment } from "./comment.js";
 import { createCheckRun } from "./check.js";
@@ -23,48 +25,49 @@ export class GitHubReporter {
     this.octokit = github.getOctokit(options.token);
   }
 
-  async report(results: SkillEvaluationResult[]): Promise<{
-    passed: boolean;
-    commentUrl: string;
-    checkUrl: string;
-  }> {
+  async report(results: SkillEvaluationResult[]): Promise<Result<
+    { passed: boolean; commentUrl: string; checkUrl: string },
+    ReporterError
+  >> {
     const passed = this.determinePassFail(results);
 
-    // Post PR comment and create check run in parallel
-    const [commentUrl, checkUrl] = await Promise.all([
-      this.postComment(results, passed),
-      this.createCheck(results, passed),
-    ]);
-
-    return { passed, commentUrl, checkUrl };
+    return Result.tryPromise({
+      try: async () => {
+        const [commentUrl, checkUrl] = await Promise.all([
+          this.postComment(results, passed),
+          createCheckRun(this.octokit as any, {
+            owner: this.options.owner,
+            repo: this.options.repo,
+            sha: this.options.sha,
+            results,
+            passed,
+          }),
+        ]);
+        return { passed, commentUrl, checkUrl };
+      },
+      catch: (cause) =>
+        new ReporterError({
+          message: `Failed to report results: ${cause instanceof Error ? cause.message : String(cause)}`,
+          cause,
+        }),
+    });
   }
 
   private determinePassFail(results: SkillEvaluationResult[]): boolean {
     if (this.options.failOn === "never") return true;
 
     for (const result of results) {
-      const hasErrors = result.lint_issues.some(
-        (i) => i.severity === "error",
-      );
-      const hasWarnings = result.lint_issues.some(
-        (i) => i.severity === "warning",
-      );
-      const hasFailedEvals = result.eval_results.some((r) => !r.passed);
-
-      if (hasErrors || hasFailedEvals) return false;
-      if (this.options.failOn === "warning" && hasWarnings) return false;
+      if (result.lint_issues.some((i) => i.severity === "error")) return false;
+      if (result.eval_results.some((r) => !r.passed)) return false;
+      if (this.options.failOn === "warning" && result.lint_issues.some((i) => i.severity === "warning")) return false;
     }
 
     return true;
   }
 
-  private async postComment(
-    results: SkillEvaluationResult[],
-    passed: boolean,
-  ): Promise<string> {
+  private async postComment(results: SkillEvaluationResult[], passed: boolean): Promise<string> {
     const body = formatComment(results, passed);
 
-    // Look for existing skill-lint comment to update
     const { data: comments } = await this.octokit.rest.issues.listComments({
       owner: this.options.owner,
       repo: this.options.repo,
@@ -72,9 +75,7 @@ export class GitHubReporter {
     });
 
     const existing = comments.find(
-      (c) =>
-        c.body?.includes("<!-- skill-lint-report -->") &&
-        c.user?.login === "github-actions[bot]",
+      (c) => c.body?.includes("<!-- skill-lint-report -->") && c.user?.login === "github-actions[bot]",
     );
 
     if (existing) {
@@ -95,18 +96,5 @@ export class GitHubReporter {
     });
 
     return data.html_url;
-  }
-
-  private async createCheck(
-    results: SkillEvaluationResult[],
-    passed: boolean,
-  ): Promise<string> {
-    return createCheckRun(this.octokit, {
-      owner: this.options.owner,
-      repo: this.options.repo,
-      sha: this.options.sha,
-      results,
-      passed,
-    });
   }
 }

@@ -1,10 +1,14 @@
 import * as core from "@actions/core";
 import * as fs from "fs";
 import * as path from "path";
+import { Result } from "better-result";
 import { parse as parseYaml } from "yaml";
+import { ConfigValidationError } from "../errors.js";
 import { configSchema, type Config, type ProviderConfig } from "./schema.js";
 
-export function loadConfig(configPath: string): Config {
+export function loadConfig(
+  configPath: string,
+): Result<Config, ConfigValidationError> {
   const fullPath = path.resolve(configPath);
 
   let rawConfig: Record<string, unknown> = {};
@@ -17,75 +21,49 @@ export function loadConfig(configPath: string): Config {
     core.info(`No config file found at ${fullPath}, using defaults`);
   }
 
-  const actionOverrides = getActionInputOverrides();
-  const merged = { ...rawConfig, ...actionOverrides };
+  const merged = { ...rawConfig, ...getActionInputOverrides() };
+  const parsed = configSchema.safeParse(merged);
 
-  const result = configSchema.safeParse(merged);
-  if (!result.success) {
-    const errors = result.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
-    throw new Error(`Invalid config:\n${errors}`);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+    return Result.err(new ConfigValidationError({
+      message: `Invalid config:\n${issues.map((i) => `  - ${i}`).join("\n")}`,
+      issues,
+    }));
   }
 
-  return result.data;
+  return Result.ok(parsed.data);
 }
 
 function getActionInputOverrides(): Record<string, unknown> {
   const overrides: Record<string, unknown> = {};
 
   const skillsPath = core.getInput("skills_path");
-  if (skillsPath) {
-    overrides.skills_path = skillsPath;
-  }
+  if (skillsPath) overrides.skills_path = skillsPath;
 
   const providerType = core.getInput("provider");
   if (providerType) {
-    const providerConfig = buildProviderConfig(providerType);
-    if (providerConfig) {
-      overrides.provider = providerConfig;
-    }
+    const config = buildProviderConfig(providerType);
+    if (config) overrides.provider = config;
   }
 
   return overrides;
 }
 
-function buildProviderConfig(
-  providerType: string,
-): ProviderConfig | undefined {
+function buildProviderConfig(providerType: string): ProviderConfig | undefined {
   const model = core.getInput("model");
 
   switch (providerType) {
     case "anthropic":
-      return {
-        type: "anthropic" as const,
-        model: model || "claude-sonnet-4-20250514",
-        api_key_env: "ANTHROPIC_API_KEY",
-      };
+      return { type: "anthropic", model: model || "claude-sonnet-4-20250514", api_key_env: "ANTHROPIC_API_KEY" };
     case "openai":
-      return {
-        type: "openai" as const,
-        model: model || "gpt-4o",
-        api_key_env: "OPENAI_API_KEY",
-      };
-    case "litellm": {
+      return { type: "openai", model: model || "gpt-4o", api_key_env: "OPENAI_API_KEY" };
+    case "litellm":
       if (!model) return undefined;
       const apiBase = core.getInput("litellm_api_base");
-      return {
-        type: "litellm" as const,
-        model,
-        api_key_env: "LITELLM_API_KEY",
-        ...(apiBase ? { api_base: apiBase } : {}),
-      };
-    }
-    case "claude-code": {
-      const cliPath = core.getInput("claude_code_path") || "claude";
-      return {
-        type: "claude-code" as const,
-        model: model || "",
-        cli_path: cliPath,
-      };
-    }
+      return { type: "litellm", model, api_key_env: "LITELLM_API_KEY", ...(apiBase ? { api_base: apiBase } : {}) };
+    case "claude-code":
+      return { type: "claude-code", model: model || "", cli_path: core.getInput("claude_code_path") || "claude" };
     default:
       return undefined;
   }

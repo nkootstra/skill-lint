@@ -1,3 +1,6 @@
+import type { Result } from "better-result";
+import type { ProviderRequestError } from "../errors.js";
+
 export interface LLMMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -17,5 +20,5 @@ export interface LLMResponse {
 export interface LLMProvider {
   readonly name: string;
   readonly model: string;
-  complete(messages: LLMMessage[]): Promise<LLMResponse>;
+  complete(messages: LLMMessage[]): Promise<Result<LLMResponse, ProviderRequestError>>;
 }

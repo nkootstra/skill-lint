@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { Result } from "better-result";
+import { ProviderRequestError } from "../errors.js";
 import type { LLMMessage, LLMProvider, LLMResponse } from "./types.js";
 
 export class AnthropicProvider implements LLMProvider {
@@ -11,45 +13,46 @@ export class AnthropicProvider implements LLMProvider {
     this.client = new Anthropic({ apiKey });
   }
 
-  async complete(messages: LLMMessage[]): Promise<LLMResponse> {
+  async complete(messages: LLMMessage[]): Promise<Result<LLMResponse, ProviderRequestError>> {
     const systemMessages = messages.filter((m) => m.role === "system");
     const nonSystemMessages = messages.filter((m) => m.role !== "system");
+    const systemPrompt = systemMessages.map((m) => m.content).join("\n\n") || undefined;
 
-    const systemPrompt =
-      systemMessages.map((m) => m.content).join("\n\n") || undefined;
+    return Result.tryPromise({
+      try: async () => {
+        const start = Date.now();
+        const response = await this.client.messages.create({
+          model: this.model,
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: nonSystemMessages.map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+        });
 
-    const start = Date.now();
+        const content = response.content
+          .filter((block) => block.type === "text")
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .join("");
 
-    const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: nonSystemMessages.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      })),
-    });
-
-    const latency_ms = Date.now() - start;
-
-    const content = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => {
-        if (block.type === "text") return block.text;
-        return "";
-      })
-      .join("");
-
-    return {
-      content,
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        total_tokens:
-          response.usage.input_tokens + response.usage.output_tokens,
+        return {
+          content,
+          usage: {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            total_tokens: response.usage.input_tokens + response.usage.output_tokens,
+          },
+          latency_ms: Date.now() - start,
+          model: response.model,
+        };
       },
-      latency_ms,
-      model: response.model,
-    };
+      catch: (cause) =>
+        new ProviderRequestError({
+          message: `Anthropic API request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          provider: "anthropic",
+          cause,
+        }),
+    });
   }
 }

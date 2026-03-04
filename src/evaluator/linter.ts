@@ -1,4 +1,6 @@
+import { Result } from "better-result";
 import type { Rubric } from "../config/schema.js";
+import { ProviderParseError } from "../errors.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { LintIssue, Skill } from "../skills/types.js";
 
@@ -14,8 +16,7 @@ interface BuiltInRule {
 const BUILT_IN_RULES: BuiltInRule[] = [
   {
     id: "no-name",
-    check: (skill) =>
-      !skill.metadata.title || skill.metadata.title === "Untitled",
+    check: (skill) => !skill.metadata.title || skill.metadata.title === "Untitled",
     severity: "error",
     message: "Skill is missing a name/title",
     suggestion: "Add a 'name' field in the YAML frontmatter",
@@ -61,7 +62,6 @@ const BUILT_IN_RULES: BuiltInRule[] = [
     id: "missing-reference-table",
     check: (skill) => {
       if (skill.references.length === 0) return false;
-      // Skills with references should have a routing table
       const hasTable = skill.instructions.includes("|") &&
         skill.instructions.toLowerCase().includes("reference");
       return !hasTable;
@@ -74,9 +74,7 @@ const BUILT_IN_RULES: BuiltInRule[] = [
     id: "orphaned-references",
     check: (skill) => {
       if (skill.references.length === 0) return false;
-      return skill.references.some(
-        (ref) => !skill.instructions.includes(ref.name),
-      );
+      return skill.references.some((ref) => !skill.instructions.includes(ref.name));
     },
     severity: "info",
     message: "Some reference files are not mentioned in the skill instructions",
@@ -93,16 +91,9 @@ export async function lintSkill(
 
   // Built-in rules
   for (const rule of BUILT_IN_RULES) {
-    if (rule.configKey && rubric[rule.configKey as keyof Rubric] === false) {
-      continue;
-    }
+    if (rule.configKey && rubric[rule.configKey as keyof Rubric] === false) continue;
     if (rule.check(skill)) {
-      issues.push({
-        rule: rule.id,
-        severity: rule.severity,
-        message: rule.message,
-        suggestion: rule.suggestion,
-      });
+      issues.push({ rule: rule.id, severity: rule.severity, message: rule.message, suggestion: rule.suggestion });
     }
   }
 
@@ -124,9 +115,7 @@ export async function lintSkill(
     if (!rule.enabled) continue;
     const customPrompt = rubric.custom_prompts[rule.id];
     if (customPrompt && provider) {
-      const llmIssues = await evaluateCustomRule(
-        skill, rule.id, rule.description, customPrompt, rule.severity, provider,
-      );
+      const llmIssues = await evaluateCustomRule(skill, rule.id, rule.description, customPrompt, rule.severity, provider);
       issues.push(...llmIssues);
     }
   }
@@ -161,31 +150,27 @@ Respond in JSON format:
 
 Only return JSON.`;
 
-  try {
-    const response = await provider.complete([
-      { role: "user", content: fullPrompt },
-    ]);
+  const response = await provider.complete([{ role: "user", content: fullPrompt }]);
 
-    const parsed = JSON.parse(response.content) as {
-      passes: boolean;
-      issues: Array<{ message: string; suggestion?: string }>;
-    };
-
-    if (!parsed.passes) {
-      return (parsed.issues ?? []).map((issue) => ({
-        rule: ruleId,
-        severity,
-        message: issue.message,
-        suggestion: issue.suggestion,
-      }));
-    }
-  } catch {
-    return [{
-      rule: ruleId,
-      severity: "info",
-      message: `Could not evaluate custom rule '${ruleId}': LLM evaluation failed`,
-    }];
+  if (response.isErr()) {
+    return [{ rule: ruleId, severity: "info", message: `Could not evaluate rule '${ruleId}': ${response.error.message}` }];
   }
 
-  return [];
+  const parsed = Result.try({
+    try: () => JSON.parse(response.value.content) as { passes: boolean; issues: Array<{ message: string; suggestion?: string }> },
+    catch: () => new ProviderParseError({ message: "Failed to parse LLM JSON response", raw: response.value.content }),
+  });
+
+  if (parsed.isErr()) {
+    return [{ rule: ruleId, severity: "info", message: `Could not parse rule '${ruleId}' response` }];
+  }
+
+  if (parsed.value.passes) return [];
+
+  return (parsed.value.issues ?? []).map((issue) => ({
+    rule: ruleId,
+    severity,
+    message: issue.message,
+    suggestion: issue.suggestion,
+  }));
 }
