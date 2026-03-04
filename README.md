@@ -124,6 +124,7 @@ Each skill goes through 5 steps:
 - [Provider Setup](docs/providers.md)
 - [Writing Evals](docs/evals.md)
 - [Custom Rubrics](docs/rubrics.md)
+- [Publishing to Marketplace](docs/publishing.md)
 
 ## License
 
