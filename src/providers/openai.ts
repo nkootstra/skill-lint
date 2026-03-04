@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { Result } from "better-result";
 import { ProviderRequestError } from "../errors.js";
+import { retryWithBackoff } from "../utils/retry.js";
 import type { LLMMessage, LLMProvider, LLMResponse } from "./types.js";
 
 export class OpenAIProvider implements LLMProvider {
@@ -17,11 +18,15 @@ export class OpenAIProvider implements LLMProvider {
     return Result.tryPromise({
       try: async () => {
         const start = Date.now();
-        const response = await this.client.chat.completions.create({
-          model: this.model,
-          messages: messages.map((m) => ({ role: m.role, content: m.content })),
-          max_tokens: 4096,
-        });
+        const response = await retryWithBackoff(
+          () =>
+            this.client.chat.completions.create({
+              model: this.model,
+              messages: messages.map((m) => ({ role: m.role, content: m.content })),
+              max_tokens: 4096,
+            }),
+          { label: `openai/${this.model}` },
+        );
 
         return {
           content: response.choices[0]?.message?.content ?? "",

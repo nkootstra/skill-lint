@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { Result } from "better-result";
 import { ProviderRequestError } from "../errors.js";
+import { retryWithBackoff } from "../utils/retry.js";
 import type { LLMMessage, LLMProvider, LLMResponse } from "./types.js";
 
 export class AnthropicProvider implements LLMProvider {
@@ -21,15 +22,19 @@ export class AnthropicProvider implements LLMProvider {
     return Result.tryPromise({
       try: async () => {
         const start = Date.now();
-        const response = await this.client.messages.create({
-          model: this.model,
-          max_tokens: 4096,
-          system: systemPrompt,
-          messages: nonSystemMessages.map((m) => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          })),
-        });
+        const response = await retryWithBackoff(
+          () =>
+            this.client.messages.create({
+              model: this.model,
+              max_tokens: 4096,
+              system: systemPrompt,
+              messages: nonSystemMessages.map((m) => ({
+                role: m.role as "user" | "assistant",
+                content: m.content,
+              })),
+            }),
+          { label: `anthropic/${this.model}` },
+        );
 
         const content = response.content
           .filter((block) => block.type === "text")
