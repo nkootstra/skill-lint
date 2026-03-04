@@ -40,27 +40,39 @@ export class ClaudeCodeProvider implements LLMProvider {
     const systemPrompt = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
     const prompt = messages.filter((m) => m.role !== "system").map((m) => m.content).join("\n\n");
 
-    const args = ["--print", "--output-format", "json"];
+    const args = [
+      "--print",
+      "--output-format", "json",
+      "--dangerously-skip-permissions",  // non-interactive CI — no TTY for permission prompts
+    ];
     if (systemPrompt) args.push("--system-prompt", systemPrompt);
     if (this.model) args.push("--model", this.model);
     args.push(prompt);
 
+    core.debug(`Claude CLI: ${this.cliPath} ${args.slice(0, 4).join(" ")} ... (prompt ${prompt.length} chars)`);
+
     return Result.tryPromise({
       try: async () => {
         const start = Date.now();
-        const { stdout } = await execFileAsync(this.cliPath, args, {
+        const { stdout, stderr } = await execFileAsync(this.cliPath, args, {
           timeout: CLI_TIMEOUT_MS,
           maxBuffer: 10 * 1024 * 1024,
           env: { ...process.env },
         });
-        return this.parseOutput(stdout, Date.now() - start);
+        const elapsed = Date.now() - start;
+        core.debug(`Claude CLI completed in ${(elapsed / 1000).toFixed(1)}s (stdout ${stdout.length} chars)`);
+        if (stderr) core.debug(`Claude CLI stderr: ${stderr.slice(0, 500)}`);
+        return this.parseOutput(stdout, elapsed);
       },
-      catch: (cause) =>
-        new ProviderRequestError({
-          message: `Claude Code CLI failed: ${classifyError(cause)}`,
+      catch: (cause) => {
+        const classified = classifyError(cause);
+        core.warning(`Claude Code CLI error: ${classified}`);
+        return new ProviderRequestError({
+          message: `Claude Code CLI failed: ${classified}`,
           provider: "claude-code",
           cause,
-        }),
+        });
+      },
     });
   }
 

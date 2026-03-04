@@ -47,6 +47,7 @@ Follow the skill instructions precisely when responding.`;
   ]);
 
   if (skillResponse.isErr()) {
+    core.warning(`  Eval "${testCase.name}" provider error: ${skillResponse.error.message}`);
     return {
       testCase,
       passed: false,
@@ -117,6 +118,7 @@ Only return JSON.`;
   const judgeResponse = await provider.complete([{ role: "user", content: judgePrompt }]);
 
   if (judgeResponse.isErr()) {
+    core.warning(`  Judge for "${testCase.name}" failed: ${judgeResponse.error.message}`);
     return { passed: false, reasoning: `Judge failed: ${judgeResponse.error.message}`, tokens_used: 0, latency_ms: 0 };
   }
 
