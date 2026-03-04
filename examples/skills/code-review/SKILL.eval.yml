@@ -1,0 +1,41 @@
+skill: code-review
+
+tests:
+  - name: Detects SQL injection
+    prompt: |
+      Review this code:
+      ```python
+      def get_user(username):
+          query = f"SELECT * FROM users WHERE name = '{username}'"
+          return db.execute(query)
+      ```
+    expected: Should identify the SQL injection vulnerability and suggest parameterized queries
+    required_keywords:
+      - "SQL injection"
+    forbidden_keywords:
+      - "looks good"
+      - "no issues"
+
+  - name: Identifies missing error handling
+    prompt: |
+      Review this code:
+      ```javascript
+      async function fetchData(url) {
+        const response = await fetch(url);
+        const data = await response.json();
+        return data;
+      }
+      ```
+    expected: Should flag missing error handling for the fetch call and JSON parsing
+    required_keywords:
+      - "error"
+
+  - name: Provides structured output
+    prompt: |
+      Review this simple function:
+      ```python
+      def add(a, b):
+          return a + b
+      ```
+    expected: Should provide a structured review with summary and verdict sections
+    match_pattern: "(?i)(summary|verdict|issues|suggestions)"

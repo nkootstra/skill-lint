@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts
+!action.yml
+.env
+__test_fixtures__/
+__test_detect_fixtures__/

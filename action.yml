@@ -1,0 +1,60 @@
+name: "Skill Lint"
+description: "Evaluate, benchmark, and refine agent skills in pull requests"
+author: "skill-lint"
+
+branding:
+  icon: "check-circle"
+  color: "blue"
+
+inputs:
+  provider:
+    description: "LLM provider to use: anthropic, openai, litellm, or claude-code"
+    required: false
+    default: "anthropic"
+  model:
+    description: "Model name to use (e.g., claude-sonnet-4-20250514, gpt-4o, or any LiteLLM model)"
+    required: false
+    default: ""
+  anthropic_api_key:
+    description: "Anthropic API key (required when provider is anthropic)"
+    required: false
+  openai_api_key:
+    description: "OpenAI API key (required when provider is openai)"
+    required: false
+  litellm_api_key:
+    description: "API key for LiteLLM provider"
+    required: false
+  litellm_api_base:
+    description: "Base URL for LiteLLM-compatible API"
+    required: false
+  claude_code_path:
+    description: "Path to Claude Code CLI binary (for claude-code provider)"
+    required: false
+    default: "claude"
+  config_path:
+    description: "Path to .skill-lint.yml config file"
+    required: false
+    default: ".skill-lint.yml"
+  skills_path:
+    description: "Path to skills directory (overrides config file)"
+    required: false
+  github_token:
+    description: "GitHub token for PR comments and check status"
+    required: false
+    default: ${{ github.token }}
+  fail_on_error:
+    description: "Fail the action if any evaluation errors are found"
+    required: false
+    default: "true"
+
+outputs:
+  results:
+    description: "JSON string of evaluation results"
+  passed:
+    description: "Whether all evaluations passed"
+  summary:
+    description: "Human-readable summary of results"
+
+runs:
+  using: "node20"
+  main: "dist/index.js"

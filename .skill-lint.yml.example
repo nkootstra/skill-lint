@@ -1,0 +1,80 @@
+# Skill Lint Configuration
+# Copy this file to .skill-lint.yml in your repository root
+
+# Where to find skill files (relative to repo root)
+# Default layout: skills/{skill-name}/SKILL.md
+#   with optional references/ subdirectory and SKILL.eval.yml
+skills_path: "skills"
+
+# Eval file pattern (co-located with skills)
+# e.g., skills/code-review/SKILL.eval.yml
+eval_pattern: "*.eval.yml"
+
+# LLM Provider configuration
+# Options: anthropic, openai, litellm, claude-code
+provider:
+  type: anthropic
+  model: claude-sonnet-4-20250514
+  # Environment variable name containing the API key
+  api_key_env: ANTHROPIC_API_KEY
+
+# Alternative: Use OpenAI
+# provider:
+#   type: openai
+#   model: gpt-4o
+#   api_key_env: OPENAI_API_KEY
+
+# Alternative: Use LiteLLM (any model via LiteLLM proxy)
+# provider:
+#   type: litellm
+#   model: "anthropic/claude-sonnet-4-20250514"
+#   api_key_env: LITELLM_API_KEY
+#   api_base: "http://localhost:4000"
+
+# Alternative: Use Claude Code CLI (uses your Max/Pro subscription)
+# provider:
+#   type: claude-code
+#   cli_path: claude
+#   model: ""  # Uses default model from your subscription
+
+# When to fail the check: "error", "warning", or "never"
+fail_on: error
+
+# Number of eval test cases to run in parallel
+parallel_evals: 3
+
+# Benchmark tracking
+benchmark:
+  enabled: true
+  track_tokens: true
+  track_latency: true
+
+# Evaluation rubric - customize what gets checked
+rubric:
+  # Built-in rules
+  require_description: true
+  require_examples: false
+  require_triggers: true
+  max_instruction_tokens: 4000
+
+  # Custom rules evaluated by the LLM
+  rules:
+    - id: clear-instructions
+      description: "Instructions should be clear and unambiguous"
+      severity: warning
+      enabled: true
+
+    - id: no-conflicting-rules
+      description: "Instructions should not contain contradictory directives"
+      severity: error
+      enabled: true
+
+  # Custom LLM prompts for rule evaluation
+  custom_prompts:
+    clear-instructions: >
+      Check if the skill instructions are clear, specific, and unambiguous.
+      Look for vague language, unclear directives, or missing context that
+      could lead to inconsistent agent behavior.
+    no-conflicting-rules: >
+      Check if any instructions contradict each other. Look for rules that
+      would cause the agent to behave differently depending on interpretation.
