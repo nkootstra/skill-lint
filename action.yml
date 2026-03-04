@@ -45,6 +45,10 @@ inputs:
     description: "GitHub token for PR comments and check status"
     required: false
     default: ${{ github.token }}
+  parallel_evals:
+    description: "Number of evals to run in parallel (1-10, lower for rate-limited APIs)"
+    required: false
+    default: "3"
   fail_on_error:
     description: "Fail the action if any evaluation errors are found"
     required: false

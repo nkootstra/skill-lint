@@ -41,6 +41,9 @@ function getActionInputOverrides(): Record<string, unknown> {
   const skillsPath = core.getInput("skills_path");
   if (skillsPath) overrides.skills_path = skillsPath;
 
+  const parallelEvals = core.getInput("parallel_evals");
+  if (parallelEvals) overrides.parallel_evals = parseInt(parallelEvals, 10);
+
   const providerType = core.getInput("provider");
   if (providerType) {
     const config = buildProviderConfig(providerType);
