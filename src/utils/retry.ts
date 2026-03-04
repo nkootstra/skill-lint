@@ -1,11 +1,11 @@
 import * as core from "@actions/core";
 
 export interface RetryOptions {
-  /** Maximum number of retry attempts (default: 3) */
+  /** Maximum number of retry attempts (default: 5) */
   maxRetries?: number;
-  /** Initial delay in ms before first retry (default: 1000) */
+  /** Initial delay in ms before first retry (default: 5000) */
   initialDelayMs?: number;
-  /** Maximum delay in ms between retries (default: 30000) */
+  /** Maximum delay in ms between retries (default: 60000) */
   maxDelayMs?: number;
   /** Label for log messages */
   label?: string;
@@ -51,9 +51,9 @@ export async function retryWithBackoff<T>(
   opts: RetryOptions = {},
 ): Promise<T> {
   const {
-    maxRetries = 3,
-    initialDelayMs = 1_000,
-    maxDelayMs = 30_000,
+    maxRetries = 5,
+    initialDelayMs = 5_000,
+    maxDelayMs = 60_000,
     label = "request",
   } = opts;
 

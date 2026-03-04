@@ -61675,7 +61675,7 @@ function retry_sleep(ms) {
  * Non-retryable errors are thrown immediately without consuming retries.
  */
 async function retryWithBackoff(fn, opts = {}) {
-    const { maxRetries = 3, initialDelayMs = 1_000, maxDelayMs = 30_000, label = "request", } = opts;
+    const { maxRetries = 5, initialDelayMs = 5_000, maxDelayMs = 60_000, label = "request", } = opts;
     let lastError;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
