@@ -1,5 +1,5 @@
 name: "Skill Lint"
-description: "Evaluate, benchmark, and refine agent skills in pull requests. Lint, eval, A/B compare, benchmark, and auto-suggest improvements for your AI agent skills."
+description: "Evaluate and benchmark agent skills in pull requests with automated testing and suggestions."
 author: "nkootstra"
 
 branding:
