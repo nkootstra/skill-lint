@@ -121,6 +121,24 @@ The `claude-code` provider runs the Claude Code CLI (`claude --print --output-fo
 
 Authentication is handled via the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, which the CLI reads automatically. This uses your subscription credits rather than per-token API billing.
 
+### Performance
+
+> **Expect 5-15 minutes** for a typical eval run (3 test cases). This is significantly slower than the `anthropic` provider.
+
+Each eval makes 2 LLM calls (skill response + judge), and each call spawns a separate `claude` CLI process. The Claude Code CLI has a cold start overhead of ~30-60 seconds per invocation (loading the Node.js runtime, authenticating, initializing). With 3 evals running in parallel, that's 6 CLI invocations.
+
+The `anthropic` provider makes the same calls as direct HTTP requests with zero startup overhead — typically completing the same 3 evals in under 60 seconds.
+
+**Choose this provider when:**
+- You want to use your existing Claude subscription (no separate API billing)
+- Eval speed is not a priority
+- You're running a small number of evals
+
+**Choose `anthropic` when:**
+- You need fast CI feedback (< 1 minute)
+- You're running many evals
+- Per-token API costs are acceptable (~$0.001/eval with haiku)
+
 ### Token expiry
 
 If your OAuth token expires, evals will fail with:
@@ -187,6 +205,64 @@ provider:
 | AWS Bedrock | `bedrock/anthropic.claude-3-sonnet-20240229-v1:0` |
 | Google | `gemini/gemini-pro` |
 | Local (Ollama) | `ollama/llama3` |
+| OpenRouter | `z-ai/glm-4.5-air:free` (via `api_base`) |
+| Google Gemini | `gemini-3.1-flash-lite-preview` (via `api_base`) |
+
+### OpenRouter
+
+The LiteLLM provider works with any OpenAI-compatible endpoint, including [OpenRouter](https://openrouter.ai). Point `api_base` at the OpenRouter API and use OpenRouter model IDs.
+
+1. Get an API key from [openrouter.ai/keys](https://openrouter.ai/keys)
+2. Add it as a GitHub Actions secret: `OPENROUTER_API_KEY`
+
+**Workflow:**
+
+```yaml
+- uses: nkootstra/skill-lint@main
+  with:
+    provider: litellm
+    model: "z-ai/glm-4.5-air:free"
+    litellm_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+    litellm_api_base: "https://openrouter.ai/api/v1"
+```
+
+**Config file:**
+
+```yaml
+provider:
+  type: litellm
+  model: "z-ai/glm-4.5-air:free"
+  api_key_env: OPENROUTER_API_KEY
+  api_base: "https://openrouter.ai/api/v1"
+```
+
+### Google Gemini
+
+You can use Google Gemini models directly through their OpenAI-compatible endpoint — no LiteLLM proxy needed.
+
+1. Get an API key from [aistudio.google.com/api-keys](https://aistudio.google.com/api-keys)
+2. Add it as a GitHub Actions secret: `GEMINI_API_KEY`
+
+**Workflow:**
+
+```yaml
+- uses: nkootstra/skill-lint@main
+  with:
+    provider: litellm
+    model: "gemini-3.1-flash-lite-preview"
+    litellm_api_key: ${{ secrets.GEMINI_API_KEY }}
+    litellm_api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+```
+
+**Config file:**
+
+```yaml
+provider:
+  type: litellm
+  model: "gemini-3.1-flash-lite-preview"
+  api_key_env: GEMINI_API_KEY
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+```
 
 ### Self-hosted LiteLLM proxy
 
