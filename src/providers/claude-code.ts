@@ -40,11 +40,7 @@ export class ClaudeCodeProvider implements LLMProvider {
     const systemPrompt = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
     const prompt = messages.filter((m) => m.role !== "system").map((m) => m.content).join("\n\n");
 
-    const args = [
-      "--print",
-      "--output-format", "json",
-      "--dangerously-skip-permissions",  // non-interactive CI — no TTY for permission prompts
-    ];
+    const args = ["--print", "--output-format", "json"];
     if (systemPrompt) args.push("--system-prompt", systemPrompt);
     if (this.model) args.push("--model", this.model);
     args.push(prompt);
