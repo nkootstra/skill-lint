@@ -12435,7 +12435,7 @@ module.exports = Schema.DEFAULT = new Schema({
   ],
   explicit: [
     __nccwpck_require__(1775),
-    __nccwpck_require__(7394),
+    __nccwpck_require__(5013),
     __nccwpck_require__(9531)
   ]
 });
@@ -13192,7 +13192,7 @@ module.exports = new Type('tag:yaml.org,2002:js/function', {
 
 /***/ }),
 
-/***/ 7394:
+/***/ 5013:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
@@ -56527,6 +56527,14 @@ const configSchema = objectType({
     rubric: rubricSchema.default({}),
     fail_on: enumType(["error", "warning", "never"]).default("error"),
     parallel_evals: numberType().min(1).max(10).default(3),
+    eval_trials: numberType()
+        .min(1)
+        .max(10)
+        .default(1)
+        .describe("Number of trials per eval test case for pass@k/pass^k metrics (1 = no multi-trial)"),
+    redact_secrets: booleanType()
+        .default(true)
+        .describe("Auto-redact API keys and secrets from PR comments and outputs"),
     benchmark: objectType({
         enabled: booleanType().default(true),
         track_tokens: booleanType().default(true),
@@ -56573,6 +56581,9 @@ function getActionInputOverrides() {
     const parallelEvals = core.getInput("parallel_evals");
     if (parallelEvals)
         overrides.parallel_evals = parseInt(parallelEvals, 10);
+    const evalTrials = core.getInput("eval_trials");
+    if (evalTrials)
+        overrides.eval_trials = parseInt(evalTrials, 10);
     const providerType = core.getInput("provider");
     if (providerType) {
         const config = buildProviderConfig(providerType);
@@ -56827,8 +56838,22 @@ function parseEvalFile(file) {
             required_keywords: t.required_keywords,
             forbidden_keywords: t.forbidden_keywords,
             max_tokens: t.max_tokens,
+            graders: parseGraders(t.graders),
         })),
     };
+}
+function parseGraders(raw) {
+    if (!Array.isArray(raw) || raw.length === 0)
+        return undefined;
+    return raw.map((g) => ({
+        type: g.type ?? "hard_constraints",
+        weight: typeof g.weight === "number" ? g.weight : 1.0,
+        match_pattern: g.match_pattern,
+        required_keywords: g.required_keywords,
+        forbidden_keywords: g.forbidden_keywords,
+        expected: g.expected,
+        command: g.command,
+    }));
 }
 function parseMarkdownSkill(file, rawContent, skillName, references) {
     const { data, content } = gray_matter_default()(rawContent);
@@ -56914,12 +56939,57 @@ function deriveSkillName(absolutePath, relativePath) {
 }
 
 ;// CONCATENATED MODULE: ./src/evaluator/benchmarker.ts
-function computeBenchmark(skillName, results) {
+/**
+ * Calculate pass@k: probability of at least 1 success in k trials.
+ * Uses the unbiased estimator: 1 - C(n-c, k) / C(n, k)
+ * where n = total trials, c = successes, k = attempts.
+ */
+function calculatePassAtK(n, c, k) {
+    if (n === 0 || k === 0)
+        return 0;
+    if (c >= n)
+        return 1.0;
+    if (n - c < k)
+        return 1.0;
+    let result = 1.0;
+    for (let i = 0; i < k; i++) {
+        result *= (n - c - i) / (n - i);
+    }
+    return 1.0 - result;
+}
+/**
+ * Calculate pass^k: probability that all k trials succeed.
+ * Estimated as (c/n)^k.
+ *
+ * A task with pass@5=100% but pass^5=30% indicates the agent *can* do it
+ * but is flaky — worth investigating.
+ */
+function calculatePassPowK(n, c, k) {
+    if (n === 0)
+        return 0;
+    const p = c / n;
+    return Math.pow(p, k);
+}
+/**
+ * Calculate normalized gain: relative improvement accounting for baseline difficulty.
+ * Formula: (head - base) / (1 - base)
+ *
+ * A 10% improvement from 50% to 60% (gain=0.20) is less impressive than
+ * 10% improvement from 90% to 100% (gain=1.0).
+ *
+ * Returns null when base is already at 100% (no room for improvement).
+ */
+function calculateNormalizedGain(basePassRate, headPassRate) {
+    if (basePassRate >= 1.0)
+        return null;
+    return (headPassRate - basePassRate) / (1.0 - basePassRate);
+}
+function computeBenchmark(skillName, results, trialsPerTest = 1) {
     const total = results.length;
     const passed = results.filter((r) => r.passed).length;
     const totalTokens = results.reduce((sum, r) => sum + r.tokens_used, 0);
     const totalLatency = results.reduce((sum, r) => sum + r.latency_ms, 0);
-    return {
+    const benchmark = {
         skill: skillName,
         total_tests: total,
         passed,
@@ -56929,23 +56999,40 @@ function computeBenchmark(skillName, results) {
         avg_latency_ms: total > 0 ? Math.round(totalLatency / total) : 0,
         total_tokens: totalTokens,
     };
+    // Only include pass@k/pass^k when multi-trial is active
+    if (trialsPerTest > 1) {
+        benchmark.pass_at_k = calculatePassAtK(total, passed, trialsPerTest);
+        benchmark.pass_pow_k = calculatePassPowK(total, passed, trialsPerTest);
+        benchmark.trials_per_test = trialsPerTest;
+    }
+    return benchmark;
 }
 function formatBenchmarkTable(benchmarks) {
     if (benchmarks.length === 0)
         return "No benchmarks to display.";
+    const hasTrials = benchmarks.some((b) => b.trials_per_test && b.trials_per_test > 1);
+    const header = hasTrials
+        ? "| Skill | Tests | Pass Rate | pass@k | pass^k | Avg Tokens | Avg Latency |"
+        : "| Skill | Tests | Pass Rate | Avg Tokens | Avg Latency |";
+    const separator = hasTrials
+        ? "|-------|-------|-----------|--------|--------|------------|-------------|"
+        : "|-------|-------|-----------|------------|-------------|";
     const rows = benchmarks.map((b) => {
         const passIcon = b.pass_rate >= 1.0 ? "pass" : b.pass_rate >= 0.5 ? "partial" : "fail";
-        return `| ${b.skill} | ${b.passed}/${b.total_tests} | ${(b.pass_rate * 100).toFixed(0)}% ${passIcon} | ${b.avg_tokens} | ${b.avg_latency_ms}ms |`;
+        const base = `| ${b.skill} | ${b.passed}/${b.total_tests} | ${(b.pass_rate * 100).toFixed(0)}% ${passIcon}`;
+        if (hasTrials) {
+            const passAtK = b.pass_at_k !== undefined ? `${(b.pass_at_k * 100).toFixed(0)}%` : "-";
+            const passPowK = b.pass_pow_k !== undefined ? `${(b.pass_pow_k * 100).toFixed(0)}%` : "-";
+            return `${base} | ${passAtK} | ${passPowK} | ${b.avg_tokens} | ${b.avg_latency_ms}ms |`;
+        }
+        return `${base} | ${b.avg_tokens} | ${b.avg_latency_ms}ms |`;
     });
-    return [
-        "| Skill | Tests | Pass Rate | Avg Tokens | Avg Latency |",
-        "|-------|-------|-----------|------------|-------------|",
-        ...rows,
-    ].join("\n");
+    return [header, separator, ...rows].join("\n");
 }
 function formatComparisonTable(comparisons) {
     if (comparisons.length === 0)
         return "";
+    const hasNormalizedGain = comparisons.some((c) => c.delta?.normalized_gain !== undefined);
     const rows = comparisons
         .filter((c) => c.delta !== null)
         .map((c) => {
@@ -56953,14 +57040,27 @@ function formatComparisonTable(comparisons) {
         const passRateDelta = formatDelta(d.pass_rate * 100, "%", true);
         const tokenDelta = formatDelta(d.avg_tokens, "", false);
         const latencyDelta = formatDelta(d.avg_latency_ms, "ms", false);
-        return `| ${c.skill} | ${((c.base?.pass_rate ?? 0) * 100).toFixed(0)}% -> ${(c.head.pass_rate * 100).toFixed(0)}% | ${passRateDelta} | ${tokenDelta} | ${latencyDelta} |`;
+        let row = `| ${c.skill} | ${((c.base?.pass_rate ?? 0) * 100).toFixed(0)}% -> ${(c.head.pass_rate * 100).toFixed(0)}% | ${passRateDelta} | ${tokenDelta} | ${latencyDelta}`;
+        if (hasNormalizedGain) {
+            const gain = d.normalized_gain !== undefined
+                ? `${(d.normalized_gain * 100).toFixed(0)}%`
+                : "N/A";
+            row += ` | ${gain}`;
+        }
+        return `${row} |`;
     });
     if (rows.length === 0)
         return "";
+    const header = hasNormalizedGain
+        ? "| Skill | Pass Rate | Delta | Token Delta | Latency Delta | Norm. Gain |"
+        : "| Skill | Pass Rate | Delta | Token Delta | Latency Delta |";
+    const separator = hasNormalizedGain
+        ? "|-------|-----------|-------|-------------|---------------|------------|"
+        : "|-------|-----------|-------|-------------|---------------|";
     return [
         "\n### A/B Comparison (vs base branch)\n",
-        "| Skill | Pass Rate | Delta | Token Delta | Latency Delta |",
-        "|-------|-----------|-------|-------------|---------------|",
+        header,
+        separator,
         ...rows,
     ].join("\n");
 }
@@ -56977,6 +57077,10 @@ function formatDelta(value, suffix, higherIsBetter) {
     }
 }
 
+// EXTERNAL MODULE: external "child_process"
+var external_child_process_ = __nccwpck_require__(5317);
+// EXTERNAL MODULE: external "util"
+var external_util_ = __nccwpck_require__(9023);
 ;// CONCATENATED MODULE: ./src/utils/json.ts
 /**
  * Extracts and parses a JSON object from an LLM response string.
@@ -57038,17 +57142,21 @@ function extractJSON(raw) {
 
 
 
-async function runEvals(skill, evalFile, provider, parallelLimit = 3) {
+
+
+const execFileAsync = (0,external_util_.promisify)(external_child_process_.execFile);
+async function runEvals(skill, evalFile, provider, parallelLimit = 3, trials = 1) {
     const results = [];
     for (let i = 0; i < evalFile.tests.length; i += parallelLimit) {
         const chunk = evalFile.tests.slice(i, i + parallelLimit);
-        const chunkResults = await Promise.all(chunk.map((testCase) => runSingleEval(skill, testCase, provider)));
+        const chunkResults = await Promise.all(chunk.flatMap((testCase) => Array.from({ length: trials }, (_, trialIndex) => runSingleEval(skill, testCase, provider, trials > 1 ? trialIndex + 1 : undefined))));
         results.push(...chunkResults);
     }
     return results;
 }
-async function runSingleEval(skill, testCase, provider) {
-    core.info(`  Running eval: ${testCase.name}`);
+async function runSingleEval(skill, testCase, provider, trialNumber) {
+    const trialLabel = trialNumber !== undefined ? ` (trial ${trialNumber})` : "";
+    core.info(`  Running eval: ${testCase.name}${trialLabel}`);
     const systemPrompt = `You are an AI assistant with the following skill activated:
 
 Title: ${skill.metadata.title}
@@ -57064,7 +57172,7 @@ Follow the skill instructions precisely when responding.`;
         { role: "user", content: testCase.prompt },
     ]);
     if (skillResponse.isErr()) {
-        core.warning(`  Eval "${testCase.name}" provider error: ${skillResponse.error.message}`);
+        core.warning(`  Eval "${testCase.name}"${trialLabel} provider error: ${skillResponse.error.message}`);
         return {
             testCase,
             passed: false,
@@ -57075,7 +57183,11 @@ Follow the skill instructions precisely when responding.`;
         };
     }
     const response = skillResponse.value;
-    // Step 2: Check hard constraints first (no LLM needed)
+    // Step 2: Use weighted graders if defined, otherwise fall back to legacy behavior
+    if (testCase.graders && testCase.graders.length > 0) {
+        return runWithGraders(testCase, response.content, response.usage.total_tokens, response.latency_ms, provider);
+    }
+    // Legacy path: hard constraints then LLM-as-judge
     const hardCheck = checkHardConstraints(testCase, response.content);
     if (hardCheck) {
         return {
@@ -57097,6 +57209,154 @@ Follow the skill instructions precisely when responding.`;
         tokens_used: response.usage.total_tokens + judgment.tokens_used,
         latency_ms: response.latency_ms + judgment.latency_ms,
     };
+}
+// --- Weighted graders (new) ---
+async function runWithGraders(testCase, output, baseTokens, baseLatency, provider) {
+    const graderResults = [];
+    let extraTokens = 0;
+    let extraLatency = 0;
+    for (const grader of testCase.graders) {
+        const result = await runSingleGrader(grader, testCase, output, provider);
+        graderResults.push(result.graderResult);
+        extraTokens += result.tokens;
+        extraLatency += result.latency;
+    }
+    // Compute weighted score
+    const totalWeight = graderResults.reduce((sum, r) => sum + r.weight, 0);
+    const weightedScore = totalWeight > 0
+        ? graderResults.reduce((sum, r) => sum + r.score * r.weight, 0) / totalWeight
+        : 0;
+    const passed = weightedScore >= 0.5;
+    const reasoning = graderResults
+        .map((r) => `[${r.grader_type}] score=${r.score.toFixed(2)}: ${r.details}`)
+        .join("; ");
+    return {
+        testCase,
+        passed,
+        output,
+        score: weightedScore,
+        reasoning,
+        tokens_used: baseTokens + extraTokens,
+        latency_ms: baseLatency + extraLatency,
+        grader_results: graderResults,
+    };
+}
+async function runSingleGrader(grader, testCase, output, provider) {
+    switch (grader.type) {
+        case "hard_constraints":
+            return runHardConstraintGrader(grader, output);
+        case "llm_rubric":
+            return runLLMRubricGrader(grader, testCase, output, provider);
+        case "script":
+            return runScriptGrader(grader, output);
+        default:
+            return {
+                graderResult: {
+                    grader_type: grader.type,
+                    score: 0,
+                    weight: grader.weight,
+                    details: `Unknown grader type: ${grader.type}`,
+                },
+                tokens: 0,
+                latency: 0,
+            };
+    }
+}
+function runHardConstraintGrader(grader, output) {
+    const outputLower = output.toLowerCase();
+    const issues = [];
+    if (grader.match_pattern) {
+        if (!new RegExp(grader.match_pattern, "is").test(output)) {
+            issues.push(`Does not match pattern: ${grader.match_pattern}`);
+        }
+    }
+    if (grader.required_keywords?.length) {
+        const missing = grader.required_keywords.filter((kw) => !outputLower.includes(kw.toLowerCase()));
+        if (missing.length > 0) {
+            issues.push(`Missing keywords: ${missing.join(", ")}`);
+        }
+    }
+    if (grader.forbidden_keywords?.length) {
+        const found = grader.forbidden_keywords.filter((kw) => outputLower.includes(kw.toLowerCase()));
+        if (found.length > 0) {
+            issues.push(`Contains forbidden keywords: ${found.join(", ")}`);
+        }
+    }
+    const score = issues.length === 0 ? 1.0 : 0.0;
+    return {
+        graderResult: {
+            grader_type: "hard_constraints",
+            score,
+            weight: grader.weight,
+            details: issues.length === 0 ? "All constraints passed" : issues.join("; "),
+        },
+        tokens: 0,
+        latency: 0,
+    };
+}
+async function runLLMRubricGrader(grader, testCase, output, provider) {
+    const expected = grader.expected ?? testCase.expected;
+    const judgment = await judgeResponse({ ...testCase, expected }, output, provider);
+    return {
+        graderResult: {
+            grader_type: "llm_rubric",
+            score: judgment.score ?? (judgment.passed ? 1.0 : 0.0),
+            weight: grader.weight,
+            details: judgment.reasoning,
+        },
+        tokens: judgment.tokens_used,
+        latency: judgment.latency_ms,
+    };
+}
+async function runScriptGrader(grader, output) {
+    if (!grader.command) {
+        return {
+            graderResult: {
+                grader_type: "script",
+                score: 0,
+                weight: grader.weight,
+                details: "No command specified for script grader",
+            },
+            tokens: 0,
+            latency: 0,
+        };
+    }
+    const startTime = Date.now();
+    try {
+        const { stdout } = await execFileAsync("bash", ["-c", grader.command], {
+            env: { ...process.env, SKILL_LINT_OUTPUT: output },
+            timeout: 30_000,
+        });
+        const latency = Date.now() - startTime;
+        // Try to parse stdout as a score (0.0-1.0), default to 1.0 on success
+        const trimmed = stdout.trim();
+        const parsedScore = parseFloat(trimmed);
+        const score = !isNaN(parsedScore) && parsedScore >= 0 && parsedScore <= 1 ? parsedScore : 1.0;
+        return {
+            graderResult: {
+                grader_type: "script",
+                score,
+                weight: grader.weight,
+                details: trimmed || "Script passed",
+            },
+            tokens: 0,
+            latency,
+        };
+    }
+    catch (err) {
+        const latency = Date.now() - startTime;
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+            graderResult: {
+                grader_type: "script",
+                score: 0,
+                weight: grader.weight,
+                details: `Script failed: ${message}`,
+            },
+            tokens: 0,
+            latency,
+        };
+    }
 }
 async function judgeResponse(testCase, response, provider) {
     const judgePrompt = `You are an impartial judge evaluating an AI assistant's response.
@@ -57200,9 +57460,11 @@ async function compareWithBase(skillPath, headBenchmark, headEvalResults, config
     if (!evalFile) {
         return { skill: skillName, base_benchmark: null, head_benchmark: headBenchmark, delta: null };
     }
+    const trials = config.eval_trials;
     core.info(`Running evals on base version of ${skillName}...`);
-    const baseResults = await runEvals(baseSkill, evalFile, provider, config.parallel_evals);
-    const baseBenchmark = computeBenchmark(skillName, baseResults);
+    const baseResults = await runEvals(baseSkill, evalFile, provider, config.parallel_evals, trials);
+    const baseBenchmark = computeBenchmark(skillName, baseResults, trials);
+    const normalizedGain = calculateNormalizedGain(baseBenchmark.pass_rate, headBenchmark.pass_rate);
     return {
         skill: skillName,
         base_benchmark: baseBenchmark,
@@ -57211,6 +57473,7 @@ async function compareWithBase(skillPath, headBenchmark, headEvalResults, config
             pass_rate: headBenchmark.pass_rate - baseBenchmark.pass_rate,
             avg_tokens: headBenchmark.avg_tokens - baseBenchmark.avg_tokens,
             avg_latency_ms: headBenchmark.avg_latency_ms - baseBenchmark.avg_latency_ms,
+            normalized_gain: normalizedGain ?? undefined,
         },
     };
 }
@@ -57506,10 +57769,11 @@ async function evaluateSkill(skillFile, evalDetected, config, provider, baseBran
     core.info(`  Found ${lintIssues.length} lint issue(s)`);
     // Step 2: Run evals
     let evalResults = [];
+    const trials = config.eval_trials;
     if (evalDetected) {
-        core.info("  [2/5] Running evaluations...");
+        core.info(`  [2/5] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
         const evalFile = parseEvalFile(evalDetected);
-        evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals);
+        evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals, trials);
         core.info(`  Evals: ${evalResults.filter((r) => r.passed).length}/${evalResults.length} passed`);
     }
     else {
@@ -57517,7 +57781,7 @@ async function evaluateSkill(skillFile, evalDetected, config, provider, baseBran
     }
     // Step 3: Benchmark
     core.info("  [3/5] Benchmarking...");
-    const benchmark = computeBenchmark(skill.metadata.title, evalResults);
+    const benchmark = computeBenchmark(skill.metadata.title, evalResults, trials);
     // Step 4: A/B comparison
     let comparison = null;
     if (evalResults.length > 0) {
@@ -57577,8 +57841,6 @@ function setShims(shims, options = { auto: false }) {
 //# sourceMappingURL=registry.mjs.map
 // EXTERNAL MODULE: ./node_modules/node-fetch/lib/index.js
 var lib = __nccwpck_require__(6705);
-// EXTERNAL MODULE: external "util"
-var external_util_ = __nccwpck_require__(9023);
 // EXTERNAL MODULE: ./node_modules/formdata-node/lib/esm/File.js
 var esm_File = __nccwpck_require__(2928);
 // EXTERNAL MODULE: ./node_modules/formdata-node/lib/esm/isFile.js
@@ -61751,8 +62013,6 @@ class AnthropicProvider {
     }
 }
 
-// EXTERNAL MODULE: external "child_process"
-var external_child_process_ = __nccwpck_require__(5317);
 // EXTERNAL MODULE: external "os"
 var external_os_ = __nccwpck_require__(857);
 ;// CONCATENATED MODULE: ./src/providers/claude-code.ts
@@ -61763,7 +62023,7 @@ var external_os_ = __nccwpck_require__(857);
 
 
 
-const execFileAsync = (0,external_util_.promisify)(external_child_process_.execFile);
+const claude_code_execFileAsync = (0,external_util_.promisify)(external_child_process_.execFile);
 const ZERO_USAGE = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
 /** Pinned CLI version — keep in sync with anthropics/claude-code-action */
 const CLAUDE_CODE_VERSION = "2.1.66";
@@ -61799,7 +62059,7 @@ class ClaudeCodeProvider {
         return Result.tryPromise({
             try: async () => {
                 const start = Date.now();
-                const { stdout, stderr } = await execFileAsync(this.cliPath, args, {
+                const { stdout, stderr } = await claude_code_execFileAsync(this.cliPath, args, {
                     timeout: CLI_TIMEOUT_MS,
                     maxBuffer: 10 * 1024 * 1024,
                     env: { ...process.env },
@@ -61862,7 +62122,7 @@ class ClaudeCodeProvider {
         core.info(`Claude Code CLI not found — installing v${CLAUDE_CODE_VERSION}...`);
         const installResult = await Result.tryPromise({
             try: async () => {
-                await execFileAsync("bash", ["-c", `curl -fsSL https://claude.ai/install.sh | bash -s -- ${CLAUDE_CODE_VERSION}`], { timeout: INSTALL_TIMEOUT_MS, env: { ...process.env } });
+                await claude_code_execFileAsync("bash", ["-c", `curl -fsSL https://claude.ai/install.sh | bash -s -- ${CLAUDE_CODE_VERSION}`], { timeout: INSTALL_TIMEOUT_MS, env: { ...process.env } });
             },
             catch: (cause) => new ProviderRequestError({
                 message: `Failed to install Claude Code CLI: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -69469,6 +69729,63 @@ function resolveKey(inputName, envName, fallbackEnv) {
     return core.getInput(inputName) || process.env[envName] || process.env[fallbackEnv] || undefined;
 }
 
+;// CONCATENATED MODULE: ./src/utils/sanitize.ts
+/**
+ * Secret redaction utility.
+ *
+ * Automatically detects and redacts API keys, tokens, and other secrets
+ * from text output.
+ */
+/** Env var name patterns that likely contain secrets */
+const SECRET_PATTERNS = [
+    /_KEY$/i,
+    /_TOKEN$/i,
+    /_SECRET$/i,
+    /_PASSWORD$/i,
+    /_CREDENTIALS$/i,
+    /^API_KEY$/i,
+    /^AUTH_TOKEN$/i,
+];
+/**
+ * Collect secret values from environment variables whose names match
+ * common secret patterns.
+ */
+function collectSecrets(env = process.env) {
+    const secrets = [];
+    for (const [key, value] of Object.entries(env)) {
+        if (!value || value.length < 6)
+            continue;
+        if (SECRET_PATTERNS.some((pattern) => pattern.test(key))) {
+            secrets.push(value);
+        }
+    }
+    // Sort by length descending so longer secrets are replaced first
+    // (prevents partial matches)
+    return secrets.sort((a, b) => b.length - a.length);
+}
+/**
+ * Redact all known secret values from a string.
+ */
+function redactSecrets(text, secrets) {
+    let result = text;
+    for (const secret of secrets) {
+        // Use split/join for reliable replacement (no regex escaping needed)
+        result = result.split(secret).join("[REDACTED]");
+    }
+    return result;
+}
+/**
+ * Deep-redact secrets from a JSON-serializable value.
+ * Returns a new object with all string values sanitized.
+ */
+function redactSecretsDeep(value, secrets) {
+    if (secrets.length === 0)
+        return value;
+    const json = JSON.stringify(value);
+    const redacted = redactSecrets(json, secrets);
+    return JSON.parse(redacted);
+}
+
 ;// CONCATENATED MODULE: ./src/reporter/comment.ts
 
 function formatComment(results, passed) {
@@ -69483,7 +69800,13 @@ function formatComment(results, passed) {
     const totalEvals = results.reduce((sum, r) => sum + r.eval_results.length, 0);
     const passedEvals = results.reduce((sum, r) => sum + r.eval_results.filter((e) => e.passed).length, 0);
     const totalSuggestions = results.reduce((sum, r) => sum + r.suggestions.length, 0);
-    parts.push(`**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`, "");
+    const hasTrials = results.some((r) => r.benchmark.trials_per_test && r.benchmark.trials_per_test > 1);
+    let summaryLine = `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
+    if (hasTrials) {
+        const trialsCount = results[0]?.benchmark.trials_per_test ?? 1;
+        summaryLine += ` | **${trialsCount}** trial(s) per test`;
+    }
+    parts.push(summaryLine, "");
     // Per-skill results
     for (const result of results) {
         parts.push(`### ${result.skill.metadata.title} (\`${result.skill.relativePath}\`)`, "");
@@ -69616,6 +69939,7 @@ function buildCheckSummary(results, passed) {
 
 
 
+
 class GitHubReporter {
     octokit;
     options;
@@ -69659,7 +69983,10 @@ class GitHubReporter {
         return true;
     }
     async postComment(results, passed) {
-        const body = formatComment(results, passed);
+        const rawBody = formatComment(results, passed);
+        const body = this.options.secrets?.length
+            ? redactSecrets(rawBody, this.options.secrets)
+            : rawBody;
         const { data: comments } = await this.octokit.rest.issues.listComments({
             owner: this.options.owner,
             repo: this.options.repo,
@@ -69740,6 +70067,7 @@ async function getBaseBranch() {
 
 
 
+
 async function run() {
     // Load config
     const configPath = core.getInput("config_path") || ".skill-lint.yml";
@@ -69772,6 +70100,8 @@ async function run() {
         setOutputs(true, [], "No skill files in this PR.");
         return;
     }
+    // Collect secrets for redaction
+    const secrets = config.redact_secrets ? collectSecrets() : [];
     // Report
     const context = github.context;
     const isPR = context.payload.pull_request !== undefined;
@@ -69784,32 +70114,33 @@ async function run() {
             prNumber: context.payload.pull_request.number,
             sha: context.payload.pull_request.head.sha,
             failOn: config.fail_on,
+            secrets,
         });
         const reportResult = await reporter.report(results);
         if (reportResult.isOk()) {
             const { passed, commentUrl, checkUrl } = reportResult.value;
             core.info(`PR comment: ${commentUrl}`);
             core.info(`Check run: ${checkUrl}`);
-            setOutputs(passed, results);
+            setOutputs(passed, results, undefined, secrets);
             if (!passed && core.getInput("fail_on_error") !== "false") {
                 core.setFailed("Skill evaluation found issues. See PR comment for details.");
             }
         }
         else {
             core.warning(`Reporter error: ${reportResult.error.message}`);
-            setOutputs(false, results);
+            setOutputs(false, results, undefined, secrets);
         }
     }
     else {
         const passed = results.every((r) => r.lint_issues.filter((i) => i.severity === "error").length === 0 && r.eval_results.every((e) => e.passed));
-        setOutputs(passed, results);
+        setOutputs(passed, results, undefined, secrets);
         if (!passed && core.getInput("fail_on_error") !== "false") {
             core.setFailed("Skill evaluation found issues.");
         }
     }
     core.info("Done!");
 }
-function setOutputs(passed, results, summary) {
+function setOutputs(passed, results, summary, secrets = []) {
     core.setOutput("passed", String(passed));
     const resultsSummary = results.map((r) => ({
         skill: r.skill.metadata.title,
@@ -69818,9 +70149,19 @@ function setOutputs(passed, results, summary) {
         evals_passed: r.eval_results.filter((e) => e.passed).length,
         evals_total: r.eval_results.length,
         suggestions: r.suggestions.length,
+        ...(r.benchmark?.trials_per_test && r.benchmark.trials_per_test > 1
+            ? {
+                pass_rate: r.benchmark.pass_rate,
+                pass_at_k: r.benchmark.pass_at_k,
+                pass_pow_k: r.benchmark.pass_pow_k,
+                trials_per_test: r.benchmark.trials_per_test,
+            }
+            : {}),
     }));
-    core.setOutput("results", JSON.stringify(resultsSummary));
-    core.setOutput("summary", summary ?? resultsSummary.map((r) => `${r.skill}: ${r.lint_issues} issues, ${r.evals_passed}/${r.evals_total} evals`).join("; "));
+    const json = JSON.stringify(resultsSummary);
+    core.setOutput("results", secrets.length > 0 ? redactSecrets(json, secrets) : json);
+    const summaryText = summary ?? resultsSummary.map((r) => `${r.skill}: ${r.lint_issues} issues, ${r.evals_passed}/${r.evals_total} evals`).join("; ");
+    core.setOutput("summary", secrets.length > 0 ? redactSecrets(summaryText, secrets) : summaryText);
 }
 run();
 

@@ -33,10 +33,16 @@ export function formatComment(
     0,
   );
 
-  parts.push(
-    `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`,
-    "",
-  );
+  const hasTrials = results.some((r) => r.benchmark.trials_per_test && r.benchmark.trials_per_test > 1);
+
+  let summaryLine = `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
+
+  if (hasTrials) {
+    const trialsCount = results[0]?.benchmark.trials_per_test ?? 1;
+    summaryLine += ` | **${trialsCount}** trial(s) per test`;
+  }
+
+  parts.push(summaryLine, "");
 
   // Per-skill results
   for (const result of results) {

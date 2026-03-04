@@ -43,6 +43,17 @@ fail_on: error
 # Number of eval test cases to run in parallel
 parallel_evals: 3
 
+# Number of trials per eval test case (1-10)
+# Higher values enable pass@k/pass^k statistical metrics for
+# measuring capability (can the skill do it?) vs reliability (does it always?)
+# Default: 1 (no multi-trial, backward compatible)
+# Recommended: 3-5 for meaningful stats
+eval_trials: 1
+
+# Auto-redact API keys and secrets from PR comments and outputs
+# Detects env vars matching *_KEY, *_TOKEN, *_SECRET patterns
+redact_secrets: true
+
 # Benchmark tracking
 benchmark:
   enabled: true

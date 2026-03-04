@@ -7,7 +7,7 @@ import type { Config } from "../config/schema.js";
 import type { LLMProvider } from "../providers/types.js";
 import { parseEvalFile, parseSkill } from "../skills/parser.js";
 import type { BenchmarkResult, ComparisonResult, EvalResult } from "../skills/types.js";
-import { computeBenchmark } from "./benchmarker.js";
+import { calculateNormalizedGain, computeBenchmark } from "./benchmarker.js";
 import { runEvals } from "./runner.js";
 
 export async function compareWithBase(
@@ -53,9 +53,12 @@ export async function compareWithBase(
     return { skill: skillName, base_benchmark: null, head_benchmark: headBenchmark, delta: null };
   }
 
+  const trials = config.eval_trials;
   core.info(`Running evals on base version of ${skillName}...`);
-  const baseResults = await runEvals(baseSkill, evalFile, provider, config.parallel_evals);
-  const baseBenchmark = computeBenchmark(skillName, baseResults);
+  const baseResults = await runEvals(baseSkill, evalFile, provider, config.parallel_evals, trials);
+  const baseBenchmark = computeBenchmark(skillName, baseResults, trials);
+
+  const normalizedGain = calculateNormalizedGain(baseBenchmark.pass_rate, headBenchmark.pass_rate);
 
   return {
     skill: skillName,
@@ -65,6 +68,7 @@ export async function compareWithBase(
       pass_rate: headBenchmark.pass_rate - baseBenchmark.pass_rate,
       avg_tokens: headBenchmark.avg_tokens - baseBenchmark.avg_tokens,
       avg_latency_ms: headBenchmark.avg_latency_ms - baseBenchmark.avg_latency_ms,
+      normalized_gain: normalizedGain ?? undefined,
     },
   };
 }

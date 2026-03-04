@@ -1,22 +1,31 @@
 import * as core from "@actions/core";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { Result } from "better-result";
 import { ProviderParseError } from "../errors.js";
 import type { LLMProvider } from "../providers/types.js";
-import type { EvalFile, EvalResult, EvalTestCase, Skill } from "../skills/types.js";
+import type { EvalFile, EvalResult, EvalTestCase, GraderConfig, GraderResult, Skill } from "../skills/types.js";
 import { extractJSON } from "../utils/json.js";
+
+const execFileAsync = promisify(execFile);
 
 export async function runEvals(
   skill: Skill,
   evalFile: EvalFile,
   provider: LLMProvider,
   parallelLimit = 3,
+  trials = 1,
 ): Promise<EvalResult[]> {
   const results: EvalResult[] = [];
 
   for (let i = 0; i < evalFile.tests.length; i += parallelLimit) {
     const chunk = evalFile.tests.slice(i, i + parallelLimit);
     const chunkResults = await Promise.all(
-      chunk.map((testCase) => runSingleEval(skill, testCase, provider)),
+      chunk.flatMap((testCase) =>
+        Array.from({ length: trials }, (_, trialIndex) =>
+          runSingleEval(skill, testCase, provider, trials > 1 ? trialIndex + 1 : undefined),
+        ),
+      ),
     );
     results.push(...chunkResults);
   }
@@ -28,8 +37,10 @@ async function runSingleEval(
   skill: Skill,
   testCase: EvalTestCase,
   provider: LLMProvider,
+  trialNumber?: number,
 ): Promise<EvalResult> {
-  core.info(`  Running eval: ${testCase.name}`);
+  const trialLabel = trialNumber !== undefined ? ` (trial ${trialNumber})` : "";
+  core.info(`  Running eval: ${testCase.name}${trialLabel}`);
 
   const systemPrompt = `You are an AI assistant with the following skill activated:
 
@@ -48,7 +59,7 @@ Follow the skill instructions precisely when responding.`;
   ]);
 
   if (skillResponse.isErr()) {
-    core.warning(`  Eval "${testCase.name}" provider error: ${skillResponse.error.message}`);
+    core.warning(`  Eval "${testCase.name}"${trialLabel} provider error: ${skillResponse.error.message}`);
     return {
       testCase,
       passed: false,
@@ -61,7 +72,12 @@ Follow the skill instructions precisely when responding.`;
 
   const response = skillResponse.value;
 
-  // Step 2: Check hard constraints first (no LLM needed)
+  // Step 2: Use weighted graders if defined, otherwise fall back to legacy behavior
+  if (testCase.graders && testCase.graders.length > 0) {
+    return runWithGraders(testCase, response.content, response.usage.total_tokens, response.latency_ms, provider);
+  }
+
+  // Legacy path: hard constraints then LLM-as-judge
   const hardCheck = checkHardConstraints(testCase, response.content);
   if (hardCheck) {
     return {
@@ -86,6 +102,204 @@ Follow the skill instructions precisely when responding.`;
     latency_ms: response.latency_ms + judgment.latency_ms,
   };
 }
+
+// --- Weighted graders (new) ---
+
+async function runWithGraders(
+  testCase: EvalTestCase,
+  output: string,
+  baseTokens: number,
+  baseLatency: number,
+  provider: LLMProvider,
+): Promise<EvalResult> {
+  const graderResults: GraderResult[] = [];
+  let extraTokens = 0;
+  let extraLatency = 0;
+
+  for (const grader of testCase.graders!) {
+    const result = await runSingleGrader(grader, testCase, output, provider);
+    graderResults.push(result.graderResult);
+    extraTokens += result.tokens;
+    extraLatency += result.latency;
+  }
+
+  // Compute weighted score
+  const totalWeight = graderResults.reduce((sum, r) => sum + r.weight, 0);
+  const weightedScore = totalWeight > 0
+    ? graderResults.reduce((sum, r) => sum + r.score * r.weight, 0) / totalWeight
+    : 0;
+
+  const passed = weightedScore >= 0.5;
+
+  const reasoning = graderResults
+    .map((r) => `[${r.grader_type}] score=${r.score.toFixed(2)}: ${r.details}`)
+    .join("; ");
+
+  return {
+    testCase,
+    passed,
+    output,
+    score: weightedScore,
+    reasoning,
+    tokens_used: baseTokens + extraTokens,
+    latency_ms: baseLatency + extraLatency,
+    grader_results: graderResults,
+  };
+}
+
+async function runSingleGrader(
+  grader: GraderConfig,
+  testCase: EvalTestCase,
+  output: string,
+  provider: LLMProvider,
+): Promise<{ graderResult: GraderResult; tokens: number; latency: number }> {
+  switch (grader.type) {
+    case "hard_constraints":
+      return runHardConstraintGrader(grader, output);
+    case "llm_rubric":
+      return runLLMRubricGrader(grader, testCase, output, provider);
+    case "script":
+      return runScriptGrader(grader, output);
+    default:
+      return {
+        graderResult: {
+          grader_type: grader.type,
+          score: 0,
+          weight: grader.weight,
+          details: `Unknown grader type: ${grader.type}`,
+        },
+        tokens: 0,
+        latency: 0,
+      };
+  }
+}
+
+function runHardConstraintGrader(
+  grader: GraderConfig,
+  output: string,
+): { graderResult: GraderResult; tokens: number; latency: number } {
+  const outputLower = output.toLowerCase();
+  const issues: string[] = [];
+
+  if (grader.match_pattern) {
+    if (!new RegExp(grader.match_pattern, "is").test(output)) {
+      issues.push(`Does not match pattern: ${grader.match_pattern}`);
+    }
+  }
+
+  if (grader.required_keywords?.length) {
+    const missing = grader.required_keywords.filter((kw) => !outputLower.includes(kw.toLowerCase()));
+    if (missing.length > 0) {
+      issues.push(`Missing keywords: ${missing.join(", ")}`);
+    }
+  }
+
+  if (grader.forbidden_keywords?.length) {
+    const found = grader.forbidden_keywords.filter((kw) => outputLower.includes(kw.toLowerCase()));
+    if (found.length > 0) {
+      issues.push(`Contains forbidden keywords: ${found.join(", ")}`);
+    }
+  }
+
+  const score = issues.length === 0 ? 1.0 : 0.0;
+
+  return {
+    graderResult: {
+      grader_type: "hard_constraints",
+      score,
+      weight: grader.weight,
+      details: issues.length === 0 ? "All constraints passed" : issues.join("; "),
+    },
+    tokens: 0,
+    latency: 0,
+  };
+}
+
+async function runLLMRubricGrader(
+  grader: GraderConfig,
+  testCase: EvalTestCase,
+  output: string,
+  provider: LLMProvider,
+): Promise<{ graderResult: GraderResult; tokens: number; latency: number }> {
+  const expected = grader.expected ?? testCase.expected;
+  const judgment = await judgeResponse(
+    { ...testCase, expected },
+    output,
+    provider,
+  );
+
+  return {
+    graderResult: {
+      grader_type: "llm_rubric",
+      score: judgment.score ?? (judgment.passed ? 1.0 : 0.0),
+      weight: grader.weight,
+      details: judgment.reasoning,
+    },
+    tokens: judgment.tokens_used,
+    latency: judgment.latency_ms,
+  };
+}
+
+async function runScriptGrader(
+  grader: GraderConfig,
+  output: string,
+): Promise<{ graderResult: GraderResult; tokens: number; latency: number }> {
+  if (!grader.command) {
+    return {
+      graderResult: {
+        grader_type: "script",
+        score: 0,
+        weight: grader.weight,
+        details: "No command specified for script grader",
+      },
+      tokens: 0,
+      latency: 0,
+    };
+  }
+
+  const startTime = Date.now();
+
+  try {
+    const { stdout } = await execFileAsync("bash", ["-c", grader.command], {
+      env: { ...process.env, SKILL_LINT_OUTPUT: output },
+      timeout: 30_000,
+    });
+
+    const latency = Date.now() - startTime;
+
+    // Try to parse stdout as a score (0.0-1.0), default to 1.0 on success
+    const trimmed = stdout.trim();
+    const parsedScore = parseFloat(trimmed);
+    const score = !isNaN(parsedScore) && parsedScore >= 0 && parsedScore <= 1 ? parsedScore : 1.0;
+
+    return {
+      graderResult: {
+        grader_type: "script",
+        score,
+        weight: grader.weight,
+        details: trimmed || "Script passed",
+      },
+      tokens: 0,
+      latency,
+    };
+  } catch (err: unknown) {
+    const latency = Date.now() - startTime;
+    const message = err instanceof Error ? err.message : String(err);
+
+    return {
+      graderResult: {
+        grader_type: "script",
+        score: 0,
+        weight: grader.weight,
+        details: `Script failed: ${message}`,
+      },
+      tokens: 0,
+      latency,
+    };
+  }
+}
+
+// --- Legacy grading (unchanged) ---
 
 interface Judgment {
   passed: boolean;

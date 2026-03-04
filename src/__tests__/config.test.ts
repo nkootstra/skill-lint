@@ -110,4 +110,29 @@ describe("configSchema", () => {
     const result = configSchema.parse({ parallel_evals: 5 });
     expect(result.parallel_evals).toBe(5);
   });
+
+  it("should default eval_trials to 1", () => {
+    const result = configSchema.parse({});
+    expect(result.eval_trials).toBe(1);
+  });
+
+  it("should accept eval_trials within bounds", () => {
+    const result = configSchema.parse({ eval_trials: 5 });
+    expect(result.eval_trials).toBe(5);
+  });
+
+  it("should reject eval_trials out of bounds", () => {
+    expect(() => configSchema.parse({ eval_trials: 0 })).toThrow();
+    expect(() => configSchema.parse({ eval_trials: 11 })).toThrow();
+  });
+
+  it("should default redact_secrets to true", () => {
+    const result = configSchema.parse({});
+    expect(result.redact_secrets).toBe(true);
+  });
+
+  it("should allow disabling redact_secrets", () => {
+    const result = configSchema.parse({ redact_secrets: false });
+    expect(result.redact_secrets).toBe(false);
+  });
 });

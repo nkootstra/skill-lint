@@ -44,6 +44,9 @@ function getActionInputOverrides(): Record<string, unknown> {
   const parallelEvals = core.getInput("parallel_evals");
   if (parallelEvals) overrides.parallel_evals = parseInt(parallelEvals, 10);
 
+  const evalTrials = core.getInput("eval_trials");
+  if (evalTrials) overrides.eval_trials = parseInt(evalTrials, 10);
+
   const providerType = core.getInput("provider");
   if (providerType) {
     const config = buildProviderConfig(providerType);

@@ -6,6 +6,7 @@ import { runPipeline } from "./evaluator/pipeline.js";
 import { createProvider } from "./providers/index.js";
 import { GitHubReporter, type ReporterOptions } from "./reporter/github.js";
 import { getBaseBranch, getChangedFiles } from "./utils/diff.js";
+import { collectSecrets, redactSecrets } from "./utils/sanitize.js";
 
 async function run(): Promise<void> {
   // Load config
@@ -49,6 +50,9 @@ async function run(): Promise<void> {
     return;
   }
 
+  // Collect secrets for redaction
+  const secrets = config.redact_secrets ? collectSecrets() : [];
+
   // Report
   const context = github.context;
   const isPR = context.payload.pull_request !== undefined;
@@ -62,6 +66,7 @@ async function run(): Promise<void> {
       prNumber: context.payload.pull_request!.number,
       sha: context.payload.pull_request!.head.sha,
       failOn: config.fail_on,
+      secrets,
     });
 
     const reportResult = await reporter.report(results);
@@ -70,19 +75,19 @@ async function run(): Promise<void> {
       const { passed, commentUrl, checkUrl } = reportResult.value;
       core.info(`PR comment: ${commentUrl}`);
       core.info(`Check run: ${checkUrl}`);
-      setOutputs(passed, results);
+      setOutputs(passed, results, undefined, secrets);
       if (!passed && core.getInput("fail_on_error") !== "false") {
         core.setFailed("Skill evaluation found issues. See PR comment for details.");
       }
     } else {
       core.warning(`Reporter error: ${reportResult.error.message}`);
-      setOutputs(false, results);
+      setOutputs(false, results, undefined, secrets);
     }
   } else {
     const passed = results.every(
       (r) => r.lint_issues.filter((i) => i.severity === "error").length === 0 && r.eval_results.every((e) => e.passed),
     );
-    setOutputs(passed, results);
+    setOutputs(passed, results, undefined, secrets);
     if (!passed && core.getInput("fail_on_error") !== "false") {
       core.setFailed("Skill evaluation found issues.");
     }
@@ -91,7 +96,18 @@ async function run(): Promise<void> {
   core.info("Done!");
 }
 
-function setOutputs(passed: boolean, results: Array<{ skill: { metadata: { title: string }; relativePath: string }; lint_issues: unknown[]; eval_results: Array<{ passed: boolean }>; suggestions: unknown[] }>, summary?: string) {
+function setOutputs(
+  passed: boolean,
+  results: Array<{
+    skill: { metadata: { title: string }; relativePath: string };
+    lint_issues: unknown[];
+    eval_results: Array<{ passed: boolean }>;
+    suggestions: unknown[];
+    benchmark?: { pass_at_k?: number; pass_pow_k?: number; trials_per_test?: number; pass_rate: number };
+  }>,
+  summary?: string,
+  secrets: string[] = [],
+) {
   core.setOutput("passed", String(passed));
 
   const resultsSummary = results.map((r) => ({
@@ -101,12 +117,23 @@ function setOutputs(passed: boolean, results: Array<{ skill: { metadata: { title
     evals_passed: r.eval_results.filter((e) => e.passed).length,
     evals_total: r.eval_results.length,
     suggestions: r.suggestions.length,
+    ...(r.benchmark?.trials_per_test && r.benchmark.trials_per_test > 1
+      ? {
+          pass_rate: r.benchmark.pass_rate,
+          pass_at_k: r.benchmark.pass_at_k,
+          pass_pow_k: r.benchmark.pass_pow_k,
+          trials_per_test: r.benchmark.trials_per_test,
+        }
+      : {}),
   }));
 
-  core.setOutput("results", JSON.stringify(resultsSummary));
-  core.setOutput("summary", summary ?? resultsSummary.map(
+  const json = JSON.stringify(resultsSummary);
+  core.setOutput("results", secrets.length > 0 ? redactSecrets(json, secrets) : json);
+
+  const summaryText = summary ?? resultsSummary.map(
     (r) => `${r.skill}: ${r.lint_issues} issues, ${r.evals_passed}/${r.evals_total} evals`,
-  ).join("; "));
+  ).join("; ");
+  core.setOutput("summary", secrets.length > 0 ? redactSecrets(summaryText, secrets) : summaryText);
 }
 
 run();

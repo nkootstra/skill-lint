@@ -158,4 +158,62 @@ describe("parseEvalFile", () => {
     expect(evalFile.tests[0].required_keywords).toEqual(["hello"]);
     expect(evalFile.tests[1].match_pattern).toBe("formatted");
   });
+
+  it("parses eval file with weighted graders", () => {
+    const evalWithGraders = path.join(TEST_DIR, "graders-eval.yml");
+    fs.writeFileSync(
+      evalWithGraders,
+      `skill: my-skill
+tests:
+  - name: Weighted test
+    prompt: "Review this"
+    expected: "Should find issues"
+    graders:
+      - type: hard_constraints
+        weight: 0.7
+        required_keywords:
+          - "vulnerability"
+      - type: llm_rubric
+        weight: 0.3
+        expected: "Identifies security issues"
+      - type: script
+        weight: 0.1
+        command: "echo 0.8"
+`,
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalWithGraders,
+      relativePath: "graders-eval.yml",
+      type: "eval",
+      format: "yaml",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    expect(evalFile.tests).toHaveLength(1);
+    expect(evalFile.tests[0].graders).toBeDefined();
+    expect(evalFile.tests[0].graders).toHaveLength(3);
+    expect(evalFile.tests[0].graders![0].type).toBe("hard_constraints");
+    expect(evalFile.tests[0].graders![0].weight).toBe(0.7);
+    expect(evalFile.tests[0].graders![0].required_keywords).toEqual(["vulnerability"]);
+    expect(evalFile.tests[0].graders![1].type).toBe("llm_rubric");
+    expect(evalFile.tests[0].graders![1].expected).toBe("Identifies security issues");
+    expect(evalFile.tests[0].graders![2].type).toBe("script");
+    expect(evalFile.tests[0].graders![2].command).toBe("echo 0.8");
+  });
+
+  it("returns undefined graders when none specified (backward compatible)", () => {
+    const file: DetectedFile = {
+      absolutePath: path.join(TEST_DIR, "my-skill", "SKILL.eval.yml"),
+      relativePath: path.join("my-skill", "SKILL.eval.yml"),
+      type: "eval",
+      format: "yaml",
+      skillDirName: "my-skill",
+    };
+
+    const evalFile = parseEvalFile(file);
+    // Existing eval files without graders should have undefined graders
+    expect(evalFile.tests[0].graders).toBeUndefined();
+  });
 });

@@ -58,10 +58,11 @@ async function evaluateSkill(
 
   // Step 2: Run evals
   let evalResults: EvalResult[] = [];
+  const trials = config.eval_trials;
   if (evalDetected) {
-    core.info("  [2/5] Running evaluations...");
+    core.info(`  [2/5] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
     const evalFile = parseEvalFile(evalDetected);
-    evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals);
+    evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals, trials);
     core.info(`  Evals: ${evalResults.filter((r) => r.passed).length}/${evalResults.length} passed`);
   } else {
     core.info("  [2/5] No eval file, skipping");
@@ -69,7 +70,7 @@ async function evaluateSkill(
 
   // Step 3: Benchmark
   core.info("  [3/5] Benchmarking...");
-  const benchmark = computeBenchmark(skill.metadata.title, evalResults);
+  const benchmark = computeBenchmark(skill.metadata.title, evalResults, trials);
 
   // Step 4: A/B comparison
   let comparison = null;

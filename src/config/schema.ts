@@ -63,6 +63,16 @@ export const configSchema = z.object({
   rubric: rubricSchema.default({}),
   fail_on: z.enum(["error", "warning", "never"]).default("error"),
   parallel_evals: z.number().min(1).max(10).default(3),
+  eval_trials: z
+    .number()
+    .min(1)
+    .max(10)
+    .default(1)
+    .describe("Number of trials per eval test case for pass@k/pass^k metrics (1 = no multi-trial)"),
+  redact_secrets: z
+    .boolean()
+    .default(true)
+    .describe("Auto-redact API keys and secrets from PR comments and outputs"),
   benchmark: z
     .object({
       enabled: z.boolean().default(true),

@@ -2,6 +2,7 @@ import * as github from "@actions/github";
 import { Result } from "better-result";
 import { ReporterError } from "../errors.js";
 import type { SkillEvaluationResult } from "../skills/types.js";
+import { redactSecrets } from "../utils/sanitize.js";
 import { formatComment } from "./comment.js";
 import { createCheckRun } from "./check.js";
 
@@ -14,6 +15,8 @@ export interface ReporterOptions {
   prNumber: number;
   sha: string;
   failOn: "error" | "warning" | "never";
+  /** Secret values to redact from PR comments and check run output */
+  secrets?: string[];
 }
 
 export class GitHubReporter {
@@ -66,7 +69,10 @@ export class GitHubReporter {
   }
 
   private async postComment(results: SkillEvaluationResult[], passed: boolean): Promise<string> {
-    const body = formatComment(results, passed);
+    const rawBody = formatComment(results, passed);
+    const body = this.options.secrets?.length
+      ? redactSecrets(rawBody, this.options.secrets)
+      : rawBody;
 
     const { data: comments } = await this.octokit.rest.issues.listComments({
       owner: this.options.owner,

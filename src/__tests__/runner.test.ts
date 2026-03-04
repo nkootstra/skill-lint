@@ -378,6 +378,153 @@ describe("runEvals", () => {
     expect(provider.complete).toHaveBeenCalledTimes(6);
   });
 
+  it("supports multi-trial by running the same test case multiple times", async () => {
+    // When trials run in parallel, calls interleave non-deterministically.
+    // All responses are the same to handle any order.
+    const judgeJson = '{"passed": true, "score": 0.8, "reasoning": "ok"}';
+    const skillResponse = Result.ok(makeLLMResponse("Response"));
+    const judgeResponse = Result.ok(makeLLMResponse(judgeJson));
+
+    // 3 trials × 2 calls each = 6 total calls, any order
+    // Since skill calls have a system message and judge calls don't mention "skill activated",
+    // we use a smart mock that returns the right response based on message content.
+    let callCount = 0;
+    const provider: LLMProvider & { calls: LLMMessage[][] } = {
+      name: "mock",
+      model: "mock-model",
+      calls: [],
+      complete: vi.fn(async (messages: LLMMessage[]) => {
+        callCount++;
+        provider.calls.push(messages);
+        // If the system message contains "skill activated", it's a skill call
+        const isSkillCall = messages.some((m) => m.role === "system" && m.content.includes("skill activated"));
+        return isSkillCall ? skillResponse : judgeResponse;
+      }),
+    };
+
+    const evalFile = makeEvalFile([
+      { name: "multi-trial", prompt: "Test", expected: "Anything" },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider, 3, 3);
+
+    // 1 test case × 3 trials = 3 results
+    expect(results).toHaveLength(3);
+    expect(results.every((r) => r.passed)).toBe(true);
+    expect(callCount).toBe(6);
+  });
+
+  it("uses weighted graders when graders field is present", async () => {
+    const provider = makeMockProvider([
+      // Skill response
+      Result.ok(makeLLMResponse("The SQL injection vulnerability requires parameterized queries.")),
+      // LLM rubric grader call
+      Result.ok(
+        makeLLMResponse('{"passed": true, "score": 0.9, "reasoning": "Good security review"}'),
+      ),
+    ]);
+
+    const evalFile = makeEvalFile([
+      {
+        name: "weighted-graders",
+        prompt: "Review this code",
+        expected: "Should find security issues",
+        graders: [
+          {
+            type: "hard_constraints",
+            weight: 0.7,
+            required_keywords: ["SQL injection"],
+          },
+          {
+            type: "llm_rubric",
+            weight: 0.3,
+            expected: "Should recommend parameterized queries",
+          },
+        ],
+      },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].passed).toBe(true);
+    expect(results[0].score).toBeDefined();
+    expect(results[0].grader_results).toBeDefined();
+    expect(results[0].grader_results).toHaveLength(2);
+    // Hard constraint grader should have score 1.0 (keyword found)
+    expect(results[0].grader_results![0].grader_type).toBe("hard_constraints");
+    expect(results[0].grader_results![0].score).toBe(1.0);
+    // LLM rubric grader should have score 0.9
+    expect(results[0].grader_results![1].grader_type).toBe("llm_rubric");
+    expect(results[0].grader_results![1].score).toBe(0.9);
+  });
+
+  it("fails with partial credit when one grader fails", async () => {
+    const provider = makeMockProvider([
+      // Skill response - missing the required keyword
+      Result.ok(makeLLMResponse("The code looks fine, no issues found.")),
+      // LLM rubric grader still gets called
+      Result.ok(
+        makeLLMResponse('{"passed": false, "score": 0.2, "reasoning": "Did not find vulnerabilities"}'),
+      ),
+    ]);
+
+    const evalFile = makeEvalFile([
+      {
+        name: "partial-credit",
+        prompt: "Review this code",
+        expected: "Should find issues",
+        graders: [
+          {
+            type: "hard_constraints",
+            weight: 0.7,
+            required_keywords: ["vulnerability"],
+          },
+          {
+            type: "llm_rubric",
+            weight: 0.3,
+            expected: "Identifies security issues",
+          },
+        ],
+      },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].passed).toBe(false);
+    // Weighted score: (0 * 0.7 + 0.2 * 0.3) / (0.7 + 0.3) = 0.06
+    expect(results[0].score).toBeDefined();
+    expect(results[0].score!).toBeLessThan(0.5);
+    expect(results[0].grader_results![0].score).toBe(0.0);
+    expect(results[0].grader_results![1].score).toBe(0.2);
+  });
+
+  it("falls back to legacy behavior when no graders field is present", async () => {
+    const provider = makeMockProvider([
+      Result.ok(makeLLMResponse("SQL injection vulnerability found.")),
+      Result.ok(
+        makeLLMResponse('{"passed": true, "score": 0.85, "reasoning": "Found the issue"}'),
+      ),
+    ]);
+
+    const evalFile = makeEvalFile([
+      {
+        name: "legacy-behavior",
+        prompt: "Review code",
+        expected: "Should find SQL injection",
+        required_keywords: ["SQL injection"],
+        // No graders field - should use legacy path
+      },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].passed).toBe(true);
+    expect(results[0].grader_results).toBeUndefined();
+  });
+
   it("accumulates tokens and latency from both skill and judge calls", async () => {
     const provider = makeMockProvider([
       Result.ok(

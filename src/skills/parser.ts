@@ -6,6 +6,7 @@ import { getSkillReferences, type DetectedFile } from "./detector.js";
 import type {
   EvalFile,
   EvalTestCase,
+  GraderConfig,
   Skill,
   SkillMetadata,
   SkillReference,
@@ -52,8 +53,23 @@ export function parseEvalFile(file: DetectedFile): EvalFile {
       required_keywords: t.required_keywords,
       forbidden_keywords: t.forbidden_keywords,
       max_tokens: t.max_tokens,
+      graders: parseGraders(t.graders),
     })),
   };
+}
+
+function parseGraders(raw: unknown): GraderConfig[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+
+  return raw.map((g: Record<string, unknown>) => ({
+    type: (g.type as GraderConfig["type"]) ?? "hard_constraints",
+    weight: typeof g.weight === "number" ? g.weight : 1.0,
+    match_pattern: g.match_pattern as string | undefined,
+    required_keywords: g.required_keywords as string[] | undefined,
+    forbidden_keywords: g.forbidden_keywords as string[] | undefined,
+    expected: g.expected as string | undefined,
+    command: g.command as string | undefined,
+  }));
 }
 
 function parseMarkdownSkill(
