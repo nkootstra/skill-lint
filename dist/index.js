@@ -56974,7 +56974,64 @@ function formatDelta(value, suffix, higherIsBetter) {
     }
 }
 
+;// CONCATENATED MODULE: ./src/utils/json.ts
+/**
+ * Extracts and parses a JSON object from an LLM response string.
+ *
+ * LLMs frequently wrap JSON in markdown code fences, add preamble text,
+ * or include trailing commentary. This function handles those cases by:
+ * 1. Stripping markdown code fences (```json ... ``` or ``` ... ```)
+ * 2. Extracting the first top-level {...} block from surrounding text
+ * 3. Falling back to raw JSON.parse if no pattern matches
+ */
+function extractJSON(raw) {
+    const trimmed = raw.trim();
+    // 1. Strip markdown code fences
+    const fencePattern = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/;
+    const fenceMatch = fencePattern.exec(trimmed);
+    if (fenceMatch) {
+        return JSON.parse(fenceMatch[1].trim());
+    }
+    // 2. Extract first balanced {...} block
+    const braceStart = trimmed.indexOf("{");
+    if (braceStart !== -1) {
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        for (let i = braceStart; i < trimmed.length; i++) {
+            const ch = trimmed[i];
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (ch === "\\") {
+                if (inString) {
+                    escape = true;
+                }
+                continue;
+            }
+            if (ch === '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString)
+                continue;
+            if (ch === "{")
+                depth++;
+            else if (ch === "}") {
+                depth--;
+                if (depth === 0) {
+                    return JSON.parse(trimmed.slice(braceStart, i + 1));
+                }
+            }
+        }
+    }
+    // 3. Last resort: try parsing the entire string as-is
+    return JSON.parse(trimmed);
+}
+
 ;// CONCATENATED MODULE: ./src/evaluator/runner.ts
+
 
 
 
@@ -57054,14 +57111,17 @@ Respond in JSON:
 { "passed": true/false, "score": 0.0 to 1.0, "reasoning": "brief explanation" }
 
 Only return JSON.`;
-    const judgeResponse = await provider.complete([{ role: "user", content: judgePrompt }]);
+    const judgeResponse = await provider.complete([
+        { role: "system", content: "You are an impartial judge. Always respond with valid JSON only. No markdown formatting, no explanation, no code fences." },
+        { role: "user", content: judgePrompt },
+    ]);
     if (judgeResponse.isErr()) {
         core.warning(`  Judge for "${testCase.name}" failed: ${judgeResponse.error.message}`);
         return { passed: false, reasoning: `Judge failed: ${judgeResponse.error.message}`, tokens_used: 0, latency_ms: 0 };
     }
     const raw = judgeResponse.value;
     const parsed = Result.try({
-        try: () => JSON.parse(raw.content),
+        try: () => extractJSON(raw.content),
         catch: () => new ProviderParseError({ message: "Failed to parse judge response", raw: raw.content }),
     });
     if (parsed.isErr()) {
@@ -57182,6 +57242,7 @@ function findEvalFile(skillPath) {
 }
 
 ;// CONCATENATED MODULE: ./src/evaluator/linter.ts
+
 
 
 const BUILT_IN_RULES = [
@@ -57312,7 +57373,7 @@ Only return JSON.`;
         return [{ rule: ruleId, severity: "info", message: `Could not evaluate rule '${ruleId}': ${response.error.message}` }];
     }
     const parsed = Result.try({
-        try: () => JSON.parse(response.value.content),
+        try: () => extractJSON(response.value.content),
         catch: () => new ProviderParseError({ message: "Failed to parse LLM JSON response", raw: response.value.content }),
     });
     if (parsed.isErr()) {
@@ -57331,6 +57392,7 @@ Only return JSON.`;
 ;// CONCATENATED MODULE: ./src/evaluator/suggester.ts
 
 
+
 async function generateSuggestions(skill, lintIssues, evalResults, provider) {
     const failedEvals = evalResults.filter((r) => !r.passed);
     const errorIssues = lintIssues.filter((i) => i.severity === "error");
@@ -57347,7 +57409,7 @@ async function generateSuggestions(skill, lintIssues, evalResults, provider) {
         return generateFallbackSuggestions(lintIssues, failedEvals);
     }
     const parsed = Result.try({
-        try: () => JSON.parse(response.value.content),
+        try: () => extractJSON(response.value.content),
         catch: () => new ProviderParseError({ message: "Failed to parse suggestions", raw: response.value.content }),
     });
     if (parsed.isOk())

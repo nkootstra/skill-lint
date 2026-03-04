@@ -1,1 +1,1 @@
-{"version":3,"file":"diff.d.ts","sourceRoot":"","sources":["file:///Users/nielskootstra/Code/skill-lint/src/utils/diff.ts"],"names":[],"mappings":"AAQA,wBAAsB,eAAe,CAAC,UAAU,EAAE,MAAM,GAAG,OAAO,CAAC,MAAM,EAAE,CAAC,CA8B3E;AAED,wBAAsB,aAAa,IAAI,OAAO,CAAC,MAAM,CAAC,CAYrD"}
+{"version":3,"file":"diff.d.ts","sourceRoot":"","sources":["file:///Users/niels.kootstra/Code/personal/skill-lint/src/utils/diff.ts"],"names":[],"mappings":"AAQA,wBAAsB,eAAe,CAAC,UAAU,EAAE,MAAM,GAAG,OAAO,CAAC,MAAM,EAAE,CAAC,CA8B3E;AAED,wBAAsB,aAAa,IAAI,OAAO,CAAC,MAAM,CAAC,CAYrD"}
