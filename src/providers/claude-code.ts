@@ -24,6 +24,8 @@ export class ClaudeCodeProvider implements LLMProvider {
   readonly model: string;
   private cliPath: string;
   private cliResolved = false;
+  /** Shared promise so concurrent calls coalesce into a single install. */
+  private resolvePromise: Promise<Result<void, ProviderRequestError>> | null = null;
 
   constructor(cliPath = "", model = "claude-haiku-4-5-20250414") {
     this.cliPath = cliPath;
@@ -31,8 +33,8 @@ export class ClaudeCodeProvider implements LLMProvider {
   }
 
   async complete(messages: LLMMessage[]): Promise<Result<LLMResponse, ProviderRequestError>> {
-    // Ensure the CLI is available (installs on first call if needed)
-    const resolveResult = await this.ensureCli();
+    // Ensure the CLI is available (installs once, concurrent callers share the same promise)
+    const resolveResult = await this.ensureCliOnce();
     if (resolveResult.isErr()) return resolveResult;
 
     const systemPrompt = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
@@ -65,6 +67,18 @@ export class ClaudeCodeProvider implements LLMProvider {
   // ---------------------------------------------------------------------------
   // CLI resolution & auto-install
   // ---------------------------------------------------------------------------
+
+  /** Deduplicates concurrent calls — only one install runs at a time. */
+  private ensureCliOnce(): Promise<Result<void, ProviderRequestError>> {
+    if (this.cliResolved) return Promise.resolve(Result.ok(undefined));
+    if (!this.resolvePromise) {
+      this.resolvePromise = this.ensureCli().finally(() => {
+        // Allow retry on failure by clearing the promise
+        if (!this.cliResolved) this.resolvePromise = null;
+      });
+    }
+    return this.resolvePromise;
+  }
 
   private async ensureCli(): Promise<Result<void, ProviderRequestError>> {
     if (this.cliResolved) return Result.ok(undefined);

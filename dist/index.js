@@ -56576,8 +56576,9 @@ function getActionInputOverrides() {
         if (config)
             overrides.provider = config;
     }
-    // Forward OAuth token to env so the Claude CLI can authenticate
-    const oauthToken = core.getInput("claude_code_oauth_token");
+    // Forward OAuth token to env so the Claude CLI can authenticate.
+    // Check the action input first, fall back to env var (e.g. set via workflow `env:` block).
+    const oauthToken = core.getInput("claude_code_oauth_token") || process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (oauthToken) {
         core.setSecret(oauthToken);
         process.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
@@ -61646,13 +61647,15 @@ class ClaudeCodeProvider {
     model;
     cliPath;
     cliResolved = false;
+    /** Shared promise so concurrent calls coalesce into a single install. */
+    resolvePromise = null;
     constructor(cliPath = "", model = "claude-haiku-4-5-20250414") {
         this.cliPath = cliPath;
         this.model = model || "claude-haiku-4-5-20250414";
     }
     async complete(messages) {
-        // Ensure the CLI is available (installs on first call if needed)
-        const resolveResult = await this.ensureCli();
+        // Ensure the CLI is available (installs once, concurrent callers share the same promise)
+        const resolveResult = await this.ensureCliOnce();
         if (resolveResult.isErr())
             return resolveResult;
         const systemPrompt = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
@@ -61683,6 +61686,19 @@ class ClaudeCodeProvider {
     // ---------------------------------------------------------------------------
     // CLI resolution & auto-install
     // ---------------------------------------------------------------------------
+    /** Deduplicates concurrent calls — only one install runs at a time. */
+    ensureCliOnce() {
+        if (this.cliResolved)
+            return Promise.resolve(Result.ok(undefined));
+        if (!this.resolvePromise) {
+            this.resolvePromise = this.ensureCli().finally(() => {
+                // Allow retry on failure by clearing the promise
+                if (!this.cliResolved)
+                    this.resolvePromise = null;
+            });
+        }
+        return this.resolvePromise;
+    }
     async ensureCli() {
         if (this.cliResolved)
             return Result.ok(undefined);
