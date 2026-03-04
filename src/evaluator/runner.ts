@@ -3,6 +3,7 @@ import { Result } from "better-result";
 import { ProviderParseError } from "../errors.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { EvalFile, EvalResult, EvalTestCase, Skill } from "../skills/types.js";
+import { extractJSON } from "../utils/json.js";
 
 export async function runEvals(
   skill: Skill,
@@ -115,7 +116,10 @@ Respond in JSON:
 
 Only return JSON.`;
 
-  const judgeResponse = await provider.complete([{ role: "user", content: judgePrompt }]);
+  const judgeResponse = await provider.complete([
+    { role: "system", content: "You are an impartial judge. Always respond with valid JSON only. No markdown formatting, no explanation, no code fences." },
+    { role: "user", content: judgePrompt },
+  ]);
 
   if (judgeResponse.isErr()) {
     core.warning(`  Judge for "${testCase.name}" failed: ${judgeResponse.error.message}`);
@@ -125,7 +129,7 @@ Only return JSON.`;
   const raw = judgeResponse.value;
 
   const parsed = Result.try({
-    try: () => JSON.parse(raw.content) as { passed: boolean; score: number; reasoning: string },
+    try: () => extractJSON<{ passed: boolean; score: number; reasoning: string }>(raw.content),
     catch: () => new ProviderParseError({ message: "Failed to parse judge response", raw: raw.content }),
   });
 

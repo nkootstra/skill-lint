@@ -2,6 +2,7 @@ import { Result } from "better-result";
 import { ProviderParseError } from "../errors.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { EvalResult, LintIssue, Skill } from "../skills/types.js";
+import { extractJSON } from "../utils/json.js";
 
 export async function generateSuggestions(
   skill: Skill,
@@ -28,7 +29,7 @@ export async function generateSuggestions(
   }
 
   const parsed = Result.try({
-    try: () => JSON.parse(response.value.content) as { suggestions: string[] },
+    try: () => extractJSON<{ suggestions: string[] }>(response.value.content),
     catch: () => new ProviderParseError({ message: "Failed to parse suggestions", raw: response.value.content }),
   });
 

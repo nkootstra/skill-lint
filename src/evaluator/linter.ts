@@ -3,6 +3,7 @@ import type { Rubric } from "../config/schema.js";
 import { ProviderParseError } from "../errors.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { LintIssue, Skill } from "../skills/types.js";
+import { extractJSON } from "../utils/json.js";
 
 interface BuiltInRule {
   id: string;
@@ -157,7 +158,7 @@ Only return JSON.`;
   }
 
   const parsed = Result.try({
-    try: () => JSON.parse(response.value.content) as { passes: boolean; issues: Array<{ message: string; suggestion?: string }> },
+    try: () => extractJSON<{ passes: boolean; issues: Array<{ message: string; suggestion?: string }> }>(response.value.content),
     catch: () => new ProviderParseError({ message: "Failed to parse LLM JSON response", raw: response.value.content }),
   });
 
