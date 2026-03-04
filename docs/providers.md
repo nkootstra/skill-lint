@@ -67,15 +67,25 @@ provider:
 
 ---
 
-## Claude Code (GitHub App / Max Subscription)
+## Claude Code (Pro/Max Subscription)
 
-Use your existing Claude Max or Pro subscription through the Claude GitHub App. **No API key needed** — the Claude App handles authentication.
+Use your Claude Pro or Max subscription to run evals. No per-token API billing — usage counts against your subscription. The CLI is auto-installed on the runner.
 
 ### Setup
 
-1. Install the [Claude GitHub App](https://github.com/apps/claude) on your repository
-2. Configure it to have access to the repos where you want skill-lint to run
-3. That's it — the Claude CLI is available in the runner environment
+1. **Generate an OAuth token** by running this locally (requires an active Claude Pro or Max subscription):
+
+   ```bash
+   claude setup-token
+   ```
+
+   This prints a long-lived token. Copy it.
+
+2. **Add the token as a GitHub Actions secret:**
+   - Go to your repository's **Settings > Secrets and variables > Actions**
+   - Click **New repository secret**
+   - Name: `CLAUDE_CODE_OAUTH_TOKEN`
+   - Value: paste the token from step 1
 
 ### Workflow
 
@@ -83,6 +93,17 @@ Use your existing Claude Max or Pro subscription through the Claude GitHub App. 
 - uses: nkootstra/skill-lint@main
   with:
     provider: claude-code
+    claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+```
+
+The default model is `claude-haiku-4-5-20250414` (cheapest, fast). To use a different model:
+
+```yaml
+- uses: nkootstra/skill-lint@main
+  with:
+    provider: claude-code
+    model: sonnet  # also: opus, haiku, or a full model ID
+    claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 ### Config file
@@ -90,24 +111,37 @@ Use your existing Claude Max or Pro subscription through the Claude GitHub App. 
 ```yaml
 provider:
   type: claude-code
-  cli_path: claude    # default, path to the Claude CLI
-  model: ""           # uses your subscription's default model
+  model: claude-haiku-4-5-20250414  # default
+  # cli_path: ""                    # auto-installed; set to override
 ```
 
 ### How it works
 
-The `claude-code` provider shells out to the `claude` CLI with `--print --output-format json`. This uses your Claude Max/Pro subscription credits rather than per-token API billing. It's ideal if you already have the Claude GitHub App installed and want to avoid managing separate API keys.
+The `claude-code` provider runs the Claude Code CLI (`claude --print --output-format json`) as a subprocess. On the first invocation, if the CLI isn't found on the runner, it is automatically installed (pinned to a specific version for stability).
 
-### Specifying a model
+Authentication is handled via the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, which the CLI reads automatically. This uses your subscription credits rather than per-token API billing.
 
-If you want to use a specific model with your subscription:
+### Token expiry
+
+If your OAuth token expires, evals will fail with:
+
+> Authentication failed — your OAuth token may be expired or invalid. Run 'claude setup-token' locally to generate a new token, then update the CLAUDE_CODE_OAUTH_TOKEN secret.
+
+Run `claude setup-token` again locally and update the GitHub secret.
+
+### Alternative: API key authentication
+
+You can also authenticate the CLI with an Anthropic API key instead of an OAuth token. Set `ANTHROPIC_API_KEY` as an environment variable in your workflow:
 
 ```yaml
 - uses: nkootstra/skill-lint@main
   with:
     provider: claude-code
-    model: claude-sonnet-4-20250514
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
+
+This uses per-token API billing rather than your subscription.
 
 ---
 

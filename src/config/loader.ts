@@ -47,6 +47,14 @@ function getActionInputOverrides(): Record<string, unknown> {
     if (config) overrides.provider = config;
   }
 
+  // Forward OAuth token to env so the Claude CLI can authenticate.
+  // Check the action input first, fall back to env var (e.g. set via workflow `env:` block).
+  const oauthToken = core.getInput("claude_code_oauth_token") || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (oauthToken) {
+    core.setSecret(oauthToken);
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+  }
+
   return overrides;
 }
 
@@ -63,7 +71,7 @@ function buildProviderConfig(providerType: string): ProviderConfig | undefined {
       const apiBase = core.getInput("litellm_api_base");
       return { type: "litellm", model, api_key_env: "LITELLM_API_KEY", ...(apiBase ? { api_base: apiBase } : {}) };
     case "claude-code":
-      return { type: "claude-code", model: model || "", cli_path: core.getInput("claude_code_path") || "claude" };
+      return { type: "claude-code", model: model || "claude-haiku-4-5-20250414", cli_path: core.getInput("claude_code_path") || "" };
     default:
       return undefined;
   }

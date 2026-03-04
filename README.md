@@ -101,7 +101,7 @@ See [docs/providers.md](docs/providers.md) for detailed setup instructions.
 |----------|--------|------|
 | **Anthropic** | `provider: anthropic` | API key via `ANTHROPIC_API_KEY` secret |
 | **OpenAI** | `provider: openai` | API key via `OPENAI_API_KEY` secret |
-| **Claude Code** | `provider: claude-code` | Claude GitHub App (Max/Pro subscription) |
+| **Claude Code** | `provider: claude-code` | OAuth token via `CLAUDE_CODE_OAUTH_TOKEN` secret (Pro/Max subscription) |
 | **LiteLLM** | `provider: litellm` | Custom proxy with any model |
 
 ## Configuration

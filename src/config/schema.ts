@@ -50,8 +50,8 @@ export const providerConfigSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("claude-code"),
-    model: z.string().default(""),
-    cli_path: z.string().default("claude"),
+    model: z.string().default("claude-haiku-4-5-20250414"),
+    cli_path: z.string().default(""),
   }),
 ]);
 

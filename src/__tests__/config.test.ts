@@ -59,6 +59,17 @@ describe("configSchema", () => {
     }
   });
 
+  it("should default claude-code model to claude-haiku-4-5-20250414", () => {
+    const result = configSchema.parse({
+      provider: { type: "claude-code" },
+    });
+    expect(result.provider.type).toBe("claude-code");
+    if (result.provider.type === "claude-code") {
+      expect(result.provider.model).toBe("claude-haiku-4-5-20250414");
+      expect(result.provider.cli_path).toBe("");
+    }
+  });
+
   it("should reject invalid provider type", () => {
     expect(() =>
       configSchema.parse({

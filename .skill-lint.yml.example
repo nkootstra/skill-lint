@@ -32,10 +32,10 @@ provider:
 #   api_base: "http://localhost:4000"
 
 # Alternative: Use Claude Code CLI (uses your Max/Pro subscription)
+# Requires CLAUDE_CODE_OAUTH_TOKEN secret (run 'claude setup-token' locally)
 # provider:
 #   type: claude-code
-#   cli_path: claude
-#   model: ""  # Uses default model from your subscription
+#   model: claude-haiku-4-5-20250414  # default; also supports sonnet, opus
 
 # When to fail the check: "error", "warning", or "never"
 fail_on: error

@@ -56515,8 +56515,8 @@ const providerConfigSchema = discriminatedUnionType("type", [
     }),
     objectType({
         type: literalType("claude-code"),
-        model: stringType().default(""),
-        cli_path: stringType().default("claude"),
+        model: stringType().default("claude-haiku-4-5-20250414"),
+        cli_path: stringType().default(""),
     }),
 ]);
 const configSchema = objectType({
@@ -56576,6 +56576,12 @@ function getActionInputOverrides() {
         if (config)
             overrides.provider = config;
     }
+    // Forward OAuth token to env so the Claude CLI can authenticate
+    const oauthToken = core.getInput("claude_code_oauth_token");
+    if (oauthToken) {
+        core.setSecret(oauthToken);
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+    }
     return overrides;
 }
 function buildProviderConfig(providerType) {
@@ -56591,7 +56597,7 @@ function buildProviderConfig(providerType) {
             const apiBase = core.getInput("litellm_api_base");
             return { type: "litellm", model, api_key_env: "LITELLM_API_KEY", ...(apiBase ? { api_base: apiBase } : {}) };
         case "claude-code":
-            return { type: "claude-code", model: model || "", cli_path: core.getInput("claude_code_path") || "claude" };
+            return { type: "claude-code", model: model || "claude-haiku-4-5-20250414", cli_path: core.getInput("claude_code_path") || "" };
         default:
             return undefined;
     }
@@ -61617,46 +61623,133 @@ class AnthropicProvider {
 
 // EXTERNAL MODULE: external "child_process"
 var external_child_process_ = __nccwpck_require__(5317);
+// EXTERNAL MODULE: external "os"
+var external_os_ = __nccwpck_require__(857);
 ;// CONCATENATED MODULE: ./src/providers/claude-code.ts
+
+
+
 
 
 
 
 const execFileAsync = (0,external_util_.promisify)(external_child_process_.execFile);
 const ZERO_USAGE = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+/** Pinned CLI version — keep in sync with anthropics/claude-code-action */
+const CLAUDE_CODE_VERSION = "2.1.66";
+/** Max time for a single CLI invocation (5 minutes) */
+const CLI_TIMEOUT_MS = 300_000;
+/** Max time for installing the CLI (2 minutes) */
+const INSTALL_TIMEOUT_MS = 120_000;
 class ClaudeCodeProvider {
     name = "claude-code";
     model;
     cliPath;
-    constructor(cliPath = "claude", model = "") {
+    cliResolved = false;
+    constructor(cliPath = "", model = "claude-haiku-4-5-20250414") {
         this.cliPath = cliPath;
-        this.model = model || "claude-code";
+        this.model = model || "claude-haiku-4-5-20250414";
     }
     async complete(messages) {
+        // Ensure the CLI is available (installs on first call if needed)
+        const resolveResult = await this.ensureCli();
+        if (resolveResult.isErr())
+            return resolveResult;
         const systemPrompt = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
         const prompt = messages.filter((m) => m.role !== "system").map((m) => m.content).join("\n\n");
         const args = ["--print", "--output-format", "json"];
         if (systemPrompt)
             args.push("--system-prompt", systemPrompt);
-        if (this.model && this.model !== "claude-code")
+        if (this.model)
             args.push("--model", this.model);
         args.push(prompt);
         return Result.tryPromise({
             try: async () => {
                 const start = Date.now();
                 const { stdout } = await execFileAsync(this.cliPath, args, {
-                    timeout: 300_000,
+                    timeout: CLI_TIMEOUT_MS,
                     maxBuffer: 10 * 1024 * 1024,
+                    env: { ...process.env },
                 });
                 return this.parseOutput(stdout, Date.now() - start);
             },
             catch: (cause) => new ProviderRequestError({
-                message: `Claude Code CLI failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+                message: `Claude Code CLI failed: ${classifyError(cause)}`,
                 provider: "claude-code",
                 cause,
             }),
         });
     }
+    // ---------------------------------------------------------------------------
+    // CLI resolution & auto-install
+    // ---------------------------------------------------------------------------
+    async ensureCli() {
+        if (this.cliResolved)
+            return Result.ok(undefined);
+        // 1. Try the explicitly configured path (if any)
+        if (this.cliPath && this.isCliAvailable(this.cliPath)) {
+            this.cliResolved = true;
+            return Result.ok(undefined);
+        }
+        // 2. Try "claude" on PATH
+        if (this.isCliAvailable("claude")) {
+            this.cliPath = "claude";
+            this.cliResolved = true;
+            return Result.ok(undefined);
+        }
+        // 3. Try the default install location
+        const defaultPath = external_path_.join(external_os_.homedir(), ".claude", "local", "claude");
+        if (this.isCliAvailable(defaultPath)) {
+            this.cliPath = defaultPath;
+            this.cliResolved = true;
+            return Result.ok(undefined);
+        }
+        // 4. Auto-install
+        core.info(`Claude Code CLI not found — installing v${CLAUDE_CODE_VERSION}...`);
+        const installResult = await Result.tryPromise({
+            try: async () => {
+                await execFileAsync("bash", ["-c", `curl -fsSL https://claude.ai/install.sh | bash -s -- ${CLAUDE_CODE_VERSION}`], { timeout: INSTALL_TIMEOUT_MS, env: { ...process.env } });
+            },
+            catch: (cause) => new ProviderRequestError({
+                message: `Failed to install Claude Code CLI: ${cause instanceof Error ? cause.message : String(cause)}`,
+                provider: "claude-code",
+                cause,
+            }),
+        });
+        if (installResult.isErr())
+            return installResult;
+        // Verify the install succeeded
+        if (this.isCliAvailable(defaultPath)) {
+            this.cliPath = defaultPath;
+            this.cliResolved = true;
+            core.info(`Claude Code CLI v${CLAUDE_CODE_VERSION} installed at ${defaultPath}`);
+            return Result.ok(undefined);
+        }
+        // Also check PATH in case the installer added it elsewhere
+        if (this.isCliAvailable("claude")) {
+            this.cliPath = "claude";
+            this.cliResolved = true;
+            core.info(`Claude Code CLI v${CLAUDE_CODE_VERSION} installed`);
+            return Result.ok(undefined);
+        }
+        return Result.err(new ProviderRequestError({
+            message: "Claude Code CLI installation completed but binary not found. Check PATH or set claude_code_path explicitly.",
+            provider: "claude-code",
+            cause: null,
+        }));
+    }
+    isCliAvailable(bin) {
+        try {
+            (0,external_child_process_.execFileSync)(bin, ["--version"], { stdio: "ignore", timeout: 10_000 });
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    // ---------------------------------------------------------------------------
+    // Output parsing
+    // ---------------------------------------------------------------------------
     parseOutput(stdout, latency_ms) {
         const parsed = Result.try(() => JSON.parse(stdout));
         if (parsed.isErr()) {
@@ -61677,6 +61770,33 @@ class ClaudeCodeProvider {
             model: this.model,
         };
     }
+}
+// -----------------------------------------------------------------------------
+// Error classification
+// -----------------------------------------------------------------------------
+/** Turn raw CLI errors into actionable messages. */
+function classifyError(cause) {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    const stderr = cause?.stderr ?? "";
+    const combined = `${msg}\n${stderr}`;
+    if (combined.includes("ENOENT")) {
+        return "Claude Code CLI binary not found. Ensure the CLI is installed or set claude_code_path.";
+    }
+    if (combined.includes("expired") ||
+        combined.includes("token") && combined.includes("invalid") ||
+        combined.includes("401") ||
+        combined.includes("Unauthorized") ||
+        combined.includes("authentication")) {
+        return ("Authentication failed — your OAuth token may be expired or invalid. " +
+            "Run 'claude setup-token' locally to generate a new token, then update the CLAUDE_CODE_OAUTH_TOKEN secret.");
+    }
+    if (combined.includes("ETIMEDOUT") || combined.includes("timeout")) {
+        return "Claude Code CLI timed out. The model may be overloaded — try again or increase the timeout.";
+    }
+    if (combined.includes("rate") && combined.includes("limit")) {
+        return "Rate limited by the API. Wait a moment and re-run the workflow.";
+    }
+    return msg;
 }
 
 ;// CONCATENATED MODULE: ./node_modules/openai/internal/qs/formats.mjs

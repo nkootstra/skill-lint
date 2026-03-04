@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "anthropic"
   model:
-    description: "Model name to use (e.g., claude-sonnet-4-20250514, gpt-4o, or any LiteLLM model)"
+    description: "Model name (e.g., claude-haiku-4-5-20250414, haiku, sonnet, opus, gpt-4o, or any LiteLLM model)"
     required: false
     default: ""
   anthropic_api_key:
@@ -27,10 +27,13 @@ inputs:
   litellm_api_base:
     description: "Base URL for LiteLLM-compatible API"
     required: false
-  claude_code_path:
-    description: "Path to Claude Code CLI binary (for claude-code provider)"
+  claude_code_oauth_token:
+    description: "Claude Code OAuth token for Pro/Max subscription auth (generate with 'claude setup-token')"
     required: false
-    default: "claude"
+  claude_code_path:
+    description: "Path to Claude Code CLI binary (for claude-code provider; auto-installed if not found)"
+    required: false
+    default: ""
   config_path:
     description: "Path to .skill-lint.yml config file"
     required: false
