@@ -56,7 +56,6 @@ inputs:
   min_pass_rate:
     description: "Minimum eval pass rate (0.0-1.0) to consider the run successful. Default 1.0 requires all evals to pass."
     required: false
-    default: "1.0"
   fail_on_error:
     description: "Fail the action if any evaluation errors are found"
     required: false
