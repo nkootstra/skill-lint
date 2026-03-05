@@ -56535,6 +56535,11 @@ const configSchema = objectType({
     redact_secrets: booleanType()
         .default(true)
         .describe("Auto-redact API keys and secrets from PR comments and outputs"),
+    min_pass_rate: numberType()
+        .min(0)
+        .max(1)
+        .default(1.0)
+        .describe("Minimum eval pass rate (0.0-1.0) to consider the run successful. Default 1.0 requires all evals to pass."),
     benchmark: objectType({
         enabled: booleanType().default(true),
         track_tokens: booleanType().default(true),
@@ -56584,6 +56589,9 @@ function getActionInputOverrides() {
     const evalTrials = core.getInput("eval_trials");
     if (evalTrials)
         overrides.eval_trials = parseInt(evalTrials, 10);
+    const minPassRate = core.getInput("min_pass_rate");
+    if (minPassRate)
+        overrides.min_pass_rate = parseFloat(minPassRate);
     const providerType = core.getInput("provider");
     if (providerType) {
         const config = buildProviderConfig(providerType);
@@ -70023,8 +70031,12 @@ class GitHubReporter {
         for (const result of results) {
             if (result.lint_issues.some((i) => i.severity === "error"))
                 return false;
-            if (result.eval_results.some((r) => !r.passed))
-                return false;
+            const totalEvals = result.eval_results.length;
+            if (totalEvals > 0) {
+                const passRate = result.eval_results.filter((r) => r.passed).length / totalEvals;
+                if (passRate < this.options.minPassRate)
+                    return false;
+            }
             if (this.options.failOn === "warning" && result.lint_issues.some((i) => i.severity === "warning"))
                 return false;
         }
@@ -70162,6 +70174,7 @@ async function run() {
             prNumber: context.payload.pull_request.number,
             sha: context.payload.pull_request.head.sha,
             failOn: config.fail_on,
+            minPassRate: config.min_pass_rate,
             secrets,
         });
         const reportResult = await reporter.report(results);
@@ -70180,7 +70193,17 @@ async function run() {
         }
     }
     else {
-        const passed = results.every((r) => r.lint_issues.filter((i) => i.severity === "error").length === 0 && r.eval_results.every((e) => e.passed));
+        const passed = results.every((r) => {
+            if (r.lint_issues.filter((i) => i.severity === "error").length > 0)
+                return false;
+            const totalEvals = r.eval_results.length;
+            if (totalEvals > 0) {
+                const passRate = r.eval_results.filter((e) => e.passed).length / totalEvals;
+                if (passRate < config.min_pass_rate)
+                    return false;
+            }
+            return true;
+        });
         setOutputs(passed, results, undefined, secrets);
         if (!passed && core.getInput("fail_on_error") !== "false") {
             core.setFailed("Skill evaluation found issues.");

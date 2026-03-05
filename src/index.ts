@@ -66,6 +66,7 @@ async function run(): Promise<void> {
       prNumber: context.payload.pull_request!.number,
       sha: context.payload.pull_request!.head.sha,
       failOn: config.fail_on,
+      minPassRate: config.min_pass_rate,
       secrets,
     });
 
@@ -84,9 +85,15 @@ async function run(): Promise<void> {
       setOutputs(false, results, undefined, secrets);
     }
   } else {
-    const passed = results.every(
-      (r) => r.lint_issues.filter((i) => i.severity === "error").length === 0 && r.eval_results.every((e) => e.passed),
-    );
+    const passed = results.every((r) => {
+      if (r.lint_issues.filter((i) => i.severity === "error").length > 0) return false;
+      const totalEvals = r.eval_results.length;
+      if (totalEvals > 0) {
+        const passRate = r.eval_results.filter((e) => e.passed).length / totalEvals;
+        if (passRate < config.min_pass_rate) return false;
+      }
+      return true;
+    });
     setOutputs(passed, results, undefined, secrets);
     if (!passed && core.getInput("fail_on_error") !== "false") {
       core.setFailed("Skill evaluation found issues.");

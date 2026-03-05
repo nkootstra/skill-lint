@@ -15,6 +15,8 @@ export interface ReporterOptions {
   prNumber: number;
   sha: string;
   failOn: "error" | "warning" | "never";
+  /** Minimum eval pass rate (0.0-1.0) to consider the run successful */
+  minPassRate: number;
   /** Secret values to redact from PR comments and check run output */
   secrets?: string[];
 }
@@ -61,7 +63,13 @@ export class GitHubReporter {
 
     for (const result of results) {
       if (result.lint_issues.some((i) => i.severity === "error")) return false;
-      if (result.eval_results.some((r) => !r.passed)) return false;
+
+      const totalEvals = result.eval_results.length;
+      if (totalEvals > 0) {
+        const passRate = result.eval_results.filter((r) => r.passed).length / totalEvals;
+        if (passRate < this.options.minPassRate) return false;
+      }
+
       if (this.options.failOn === "warning" && result.lint_issues.some((i) => i.severity === "warning")) return false;
     }
 

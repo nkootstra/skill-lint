@@ -73,6 +73,12 @@ export const configSchema = z.object({
     .boolean()
     .default(true)
     .describe("Auto-redact API keys and secrets from PR comments and outputs"),
+  min_pass_rate: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(1.0)
+    .describe("Minimum eval pass rate (0.0-1.0) to consider the run successful. Default 1.0 requires all evals to pass."),
   benchmark: z
     .object({
       enabled: z.boolean().default(true),

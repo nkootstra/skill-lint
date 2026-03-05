@@ -47,6 +47,9 @@ function getActionInputOverrides(): Record<string, unknown> {
   const evalTrials = core.getInput("eval_trials");
   if (evalTrials) overrides.eval_trials = parseInt(evalTrials, 10);
 
+  const minPassRate = core.getInput("min_pass_rate");
+  if (minPassRate) overrides.min_pass_rate = parseFloat(minPassRate);
+
   const providerType = core.getInput("provider");
   if (providerType) {
     const config = buildProviderConfig(providerType);
