@@ -20,6 +20,9 @@ const SKILL_EXTENSIONS: Record<string, "markdown" | "yaml" | "json"> = {
 
 const EVAL_PATTERNS = [".eval.yml", ".eval.yaml", ".eval.json"];
 
+/** Filenames recognized as Anthropic-style eval files (directly in skill dir or evals/ subdir) */
+const EVAL_DIRECT_NAMES = ["evals.json", "evals.yml", "evals.yaml"];
+
 /**
  * Detects skill files supporting two layouts:
  *
@@ -47,7 +50,7 @@ export function detectSkillFiles(
     const fullPath = path.join(absoluteDir, entry.name);
 
     if (entry.isDirectory()) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "references") {
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "references" || entry.name === "evals") {
         continue;
       }
       // Check for directory-based layout: skills/{name}/SKILL.md
@@ -107,39 +110,71 @@ function detectInSkillDirectory(
   const dirEntries = fs.readdirSync(dirPath, { withFileTypes: true });
 
   for (const entry of dirEntries) {
+    if (entry.isFile()) {
+      const fullPath = path.join(dirPath, entry.name);
+      const relPath = path.relative(rootDir, fullPath);
+      const ext = path.extname(entry.name).toLowerCase();
+      const nameLower = entry.name.toLowerCase();
+
+      // Check if it's an eval file: either *.eval.{yml,yaml,json} or evals.{json,yml,yaml}
+      const isEval =
+        EVAL_PATTERNS.some((pattern) => nameLower.endsWith(pattern)) ||
+        EVAL_DIRECT_NAMES.includes(nameLower);
+
+      if (isEval) {
+        detected.push({
+          absolutePath: fullPath,
+          relativePath: relPath,
+          type: "eval",
+          format: ext === ".json" ? "json" : "yaml",
+          skillDirName: dirName,
+        });
+        continue;
+      }
+
+      // Check if it's a skill file
+      const format = SKILL_EXTENSIONS[ext];
+      if (format) {
+        detected.push({
+          absolutePath: fullPath,
+          relativePath: relPath,
+          type: "skill",
+          format,
+          skillDirName: dirName,
+        });
+      }
+    } else if (entry.isDirectory() && entry.name === "evals") {
+      // Check for Anthropic-style evals/ subdirectory
+      detectEvalsSubdirectory(rootDir, path.join(dirPath, entry.name), dirName, detected);
+    }
+  }
+}
+
+function detectEvalsSubdirectory(
+  rootDir: string,
+  evalsDir: string,
+  skillDirName: string,
+  detected: DetectedFile[],
+): void {
+  const entries = fs.readdirSync(evalsDir, { withFileTypes: true });
+
+  for (const entry of entries) {
     if (!entry.isFile()) continue;
 
-    const fullPath = path.join(dirPath, entry.name);
+    const nameLower = entry.name.toLowerCase();
+    if (!EVAL_DIRECT_NAMES.includes(nameLower)) continue;
+
+    const fullPath = path.join(evalsDir, entry.name);
     const relPath = path.relative(rootDir, fullPath);
     const ext = path.extname(entry.name).toLowerCase();
 
-    // Check if it's an eval file
-    const isEval = EVAL_PATTERNS.some((pattern) =>
-      entry.name.toLowerCase().endsWith(pattern),
-    );
-
-    if (isEval) {
-      detected.push({
-        absolutePath: fullPath,
-        relativePath: relPath,
-        type: "eval",
-        format: ext === ".json" ? "json" : "yaml",
-        skillDirName: dirName,
-      });
-      continue;
-    }
-
-    // Check if it's a skill file
-    const format = SKILL_EXTENSIONS[ext];
-    if (format) {
-      detected.push({
-        absolutePath: fullPath,
-        relativePath: relPath,
-        type: "skill",
-        format,
-        skillDirName: dirName,
-      });
-    }
+    detected.push({
+      absolutePath: fullPath,
+      relativePath: relPath,
+      type: "eval",
+      format: ext === ".json" ? "json" : "yaml",
+      skillDirName,
+    });
   }
 }
 

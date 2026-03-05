@@ -56629,6 +56629,8 @@ const SKILL_EXTENSIONS = {
     ".json": "json",
 };
 const EVAL_PATTERNS = [".eval.yml", ".eval.yaml", ".eval.json"];
+/** Filenames recognized as Anthropic-style eval files (directly in skill dir or evals/ subdir) */
+const EVAL_DIRECT_NAMES = ["evals.json", "evals.yml", "evals.yaml"];
 /**
  * Detects skill files supporting two layouts:
  *
@@ -56648,7 +56650,7 @@ function detectSkillFiles(skillsDir, changedFiles) {
     for (const entry of entries) {
         const fullPath = external_path_.join(absoluteDir, entry.name);
         if (entry.isDirectory()) {
-            if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "references") {
+            if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "references" || entry.name === "evals") {
                 continue;
             }
             // Check for directory-based layout: skills/{name}/SKILL.md
@@ -56687,34 +56689,60 @@ function detectSkillFiles(skillsDir, changedFiles) {
 function detectInSkillDirectory(rootDir, dirPath, dirName, detected) {
     const dirEntries = external_fs_.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of dirEntries) {
+        if (entry.isFile()) {
+            const fullPath = external_path_.join(dirPath, entry.name);
+            const relPath = external_path_.relative(rootDir, fullPath);
+            const ext = external_path_.extname(entry.name).toLowerCase();
+            const nameLower = entry.name.toLowerCase();
+            // Check if it's an eval file: either *.eval.{yml,yaml,json} or evals.{json,yml,yaml}
+            const isEval = EVAL_PATTERNS.some((pattern) => nameLower.endsWith(pattern)) ||
+                EVAL_DIRECT_NAMES.includes(nameLower);
+            if (isEval) {
+                detected.push({
+                    absolutePath: fullPath,
+                    relativePath: relPath,
+                    type: "eval",
+                    format: ext === ".json" ? "json" : "yaml",
+                    skillDirName: dirName,
+                });
+                continue;
+            }
+            // Check if it's a skill file
+            const format = SKILL_EXTENSIONS[ext];
+            if (format) {
+                detected.push({
+                    absolutePath: fullPath,
+                    relativePath: relPath,
+                    type: "skill",
+                    format,
+                    skillDirName: dirName,
+                });
+            }
+        }
+        else if (entry.isDirectory() && entry.name === "evals") {
+            // Check for Anthropic-style evals/ subdirectory
+            detectEvalsSubdirectory(rootDir, external_path_.join(dirPath, entry.name), dirName, detected);
+        }
+    }
+}
+function detectEvalsSubdirectory(rootDir, evalsDir, skillDirName, detected) {
+    const entries = external_fs_.readdirSync(evalsDir, { withFileTypes: true });
+    for (const entry of entries) {
         if (!entry.isFile())
             continue;
-        const fullPath = external_path_.join(dirPath, entry.name);
+        const nameLower = entry.name.toLowerCase();
+        if (!EVAL_DIRECT_NAMES.includes(nameLower))
+            continue;
+        const fullPath = external_path_.join(evalsDir, entry.name);
         const relPath = external_path_.relative(rootDir, fullPath);
         const ext = external_path_.extname(entry.name).toLowerCase();
-        // Check if it's an eval file
-        const isEval = EVAL_PATTERNS.some((pattern) => entry.name.toLowerCase().endsWith(pattern));
-        if (isEval) {
-            detected.push({
-                absolutePath: fullPath,
-                relativePath: relPath,
-                type: "eval",
-                format: ext === ".json" ? "json" : "yaml",
-                skillDirName: dirName,
-            });
-            continue;
-        }
-        // Check if it's a skill file
-        const format = SKILL_EXTENSIONS[ext];
-        if (format) {
-            detected.push({
-                absolutePath: fullPath,
-                relativePath: relPath,
-                type: "skill",
-                format,
-                skillDirName: dirName,
-            });
-        }
+        detected.push({
+            absolutePath: fullPath,
+            relativePath: relPath,
+            type: "eval",
+            format: ext === ".json" ? "json" : "yaml",
+            skillDirName,
+        });
     }
 }
 function detectFlatFile(rootDir, filePath, detected) {
@@ -56825,21 +56853,34 @@ function parseEvalFile(file) {
         parsed = (0,dist/* parse */.qg)(rawContent);
     }
     const obj = parsed;
-    const tests = (obj.tests ?? obj.test_cases ?? []);
-    const skillPath = (obj.skill ?? "");
+    // Support Anthropic format: `evals` array key + `skill_name`
+    const rawTests = (obj.tests ?? obj.test_cases ?? obj.evals ?? []);
+    const skillPath = (obj.skill ?? obj.skill_name ?? "");
+    // Detect Anthropic format: presence of `evals` key or entries with `id`/`expected_output`
+    const isAnthropicFormat = "evals" in obj;
     return {
         filePath: file.absolutePath,
         skillPath,
-        tests: tests.map((t) => ({
-            name: t.name ?? "Unnamed test",
-            prompt: t.prompt,
-            expected: t.expected ?? "",
-            match_pattern: t.match_pattern,
-            required_keywords: t.required_keywords,
-            forbidden_keywords: t.forbidden_keywords,
-            max_tokens: t.max_tokens,
-            graders: parseGraders(t.graders),
-        })),
+        tests: rawTests.map((t) => normalizeTestCase(t, isAnthropicFormat)),
+    };
+}
+function normalizeTestCase(t, isAnthropicFormat) {
+    const name = isAnthropicFormat && t.id != null
+        ? `eval-${t.id}`
+        : (t.name ?? "Unnamed test");
+    const expected = (t.expected ?? t.expected_output ?? "");
+    return {
+        name,
+        prompt: t.prompt,
+        expected,
+        id: typeof t.id === "number" ? t.id : undefined,
+        files: Array.isArray(t.files) ? t.files : undefined,
+        expectations: Array.isArray(t.expectations) ? t.expectations : undefined,
+        match_pattern: t.match_pattern,
+        required_keywords: t.required_keywords,
+        forbidden_keywords: t.forbidden_keywords,
+        max_tokens: t.max_tokens,
+        graders: parseGraders(t.graders),
     };
 }
 function parseGraders(raw) {
@@ -57359,16 +57400,23 @@ async function runScriptGrader(grader, output) {
     }
 }
 async function judgeResponse(testCase, response, provider) {
+    let expectationsBlock = "";
+    if (testCase.expectations && testCase.expectations.length > 0) {
+        const checkpoints = testCase.expectations
+            .map((e, i) => `  ${i + 1}. ${e}`)
+            .join("\n");
+        expectationsBlock = `\nExpectations (each must be verified):\n${checkpoints}\n`;
+    }
     const judgePrompt = `You are an impartial judge evaluating an AI assistant's response.
 
 Test case: ${testCase.name}
 User prompt: ${testCase.prompt}
 Expected behavior: ${testCase.expected}
-
+${expectationsBlock}
 Actual response:
 ${response}
 
-Evaluate whether the response meets the expected behavior.
+Evaluate whether the response meets the expected behavior.${testCase.expectations?.length ? " Verify each expectation individually. The response must satisfy ALL expectations to pass." : ""}
 
 Respond in JSON:
 { "passed": true/false, "score": 0.0 to 1.0, "reasoning": "brief explanation" }

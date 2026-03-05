@@ -314,16 +314,24 @@ async function judgeResponse(
   response: string,
   provider: LLMProvider,
 ): Promise<Judgment> {
+  let expectationsBlock = "";
+  if (testCase.expectations && testCase.expectations.length > 0) {
+    const checkpoints = testCase.expectations
+      .map((e, i) => `  ${i + 1}. ${e}`)
+      .join("\n");
+    expectationsBlock = `\nExpectations (each must be verified):\n${checkpoints}\n`;
+  }
+
   const judgePrompt = `You are an impartial judge evaluating an AI assistant's response.
 
 Test case: ${testCase.name}
 User prompt: ${testCase.prompt}
 Expected behavior: ${testCase.expected}
-
+${expectationsBlock}
 Actual response:
 ${response}
 
-Evaluate whether the response meets the expected behavior.
+Evaluate whether the response meets the expected behavior.${testCase.expectations?.length ? " Verify each expectation individually. The response must satisfy ALL expectations to pass." : ""}
 
 Respond in JSON:
 { "passed": true/false, "score": 0.0 to 1.0, "reasoning": "brief explanation" }

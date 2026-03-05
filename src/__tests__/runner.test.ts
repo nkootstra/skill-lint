@@ -550,4 +550,88 @@ describe("runEvals", () => {
     expect(results[0].tokens_used).toBe(150 + 230);
     expect(results[0].latency_ms).toBe(300 + 150);
   });
+
+  it("includes expectations in judge prompt when present", async () => {
+    const provider = makeMockProvider([
+      Result.ok(makeLLMResponse("The function prints hello world.")),
+      Result.ok(makeLLMResponse('{"passed": true, "score": 0.9, "reasoning": "All expectations met"}')),
+    ]);
+
+    const evalFile = makeEvalFile([
+      {
+        name: "expectations-test",
+        prompt: "Write a hello world function",
+        expected: "Should produce a working function",
+        expectations: [
+          "The output includes a function definition",
+          "The function prints hello world",
+        ],
+      },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].passed).toBe(true);
+
+    // Check that the judge prompt includes the expectations
+    const judgeCall = provider.calls[1];
+    const userMsg = judgeCall.find((m) => m.role === "user");
+    expect(userMsg).toBeDefined();
+    expect(userMsg!.content).toContain("Expectations (each must be verified)");
+    expect(userMsg!.content).toContain("1. The output includes a function definition");
+    expect(userMsg!.content).toContain("2. The function prints hello world");
+    expect(userMsg!.content).toContain("satisfy ALL expectations");
+  });
+
+  it("works with expectations but no expected field", async () => {
+    const provider = makeMockProvider([
+      Result.ok(makeLLMResponse("Here is the result with details.")),
+      Result.ok(makeLLMResponse('{"passed": true, "score": 0.85, "reasoning": "Expectations met"}')),
+    ]);
+
+    const evalFile = makeEvalFile([
+      {
+        name: "expectations-only",
+        prompt: "Do something",
+        expected: "",
+        expectations: ["The output includes details"],
+      },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].passed).toBe(true);
+
+    // Judge should still be called with expectations
+    const judgeCall = provider.calls[1];
+    const userMsg = judgeCall.find((m) => m.role === "user");
+    expect(userMsg!.content).toContain("Expectations (each must be verified)");
+  });
+
+  it("does not include expectations block when expectations is empty", async () => {
+    const provider = makeMockProvider([
+      Result.ok(makeLLMResponse("Skill response")),
+      Result.ok(makeLLMResponse('{"passed": true, "score": 0.8, "reasoning": "ok"}')),
+    ]);
+
+    const evalFile = makeEvalFile([
+      {
+        name: "no-expectations",
+        prompt: "Test",
+        expected: "Expected behavior",
+      },
+    ]);
+
+    const results = await runEvals(makeSkill(), evalFile, provider);
+
+    expect(results).toHaveLength(1);
+
+    // Judge prompt should NOT contain the expectations block
+    const judgeCall = provider.calls[1];
+    const userMsg = judgeCall.find((m) => m.role === "user");
+    expect(userMsg!.content).not.toContain("Expectations (each must be verified)");
+    expect(userMsg!.content).not.toContain("satisfy ALL expectations");
+  });
 });

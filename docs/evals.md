@@ -19,6 +19,66 @@ tests:
     max_tokens: 1000        # optional
 ```
 
+## Anthropic `evals.json` Format
+
+skill-lint also supports Anthropic's `evals.json` format, used by [Anthropic's skill-creator](https://github.com/anthropics/skills/tree/main/skills/skill-creator). Place the file at `evals/evals.json` inside your skill directory:
+
+```
+skills/
+  my-skill/
+    SKILL.md
+    evals/
+      evals.json
+```
+
+```json
+{
+  "skill_name": "my-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Write a hello world function",
+      "expected_output": "Should produce a working function",
+      "files": ["evals/files/sample.py"],
+      "expectations": [
+        "The output includes a function definition",
+        "The function prints hello world"
+      ]
+    }
+  ]
+}
+```
+
+### Field Mapping
+
+| Anthropic field | skill-lint field | Notes |
+|---|---|---|
+| `skill_name` | `skill` | Both are accepted |
+| `evals` | `tests` | Both array keys are accepted |
+| `id` (number) | `name` (string) | Converted to `"eval-${id}"` |
+| `expected_output` | `expected` | Both are accepted |
+| `files` | `files` | Stored but not injected into prompts yet |
+| `expectations` | `expectations` | Fed to LLM judge as explicit checkpoints |
+
+### Expectations
+
+The `expectations` field is an array of statements the LLM judge must verify individually. When present, the judge prompt includes each expectation as a numbered checkpoint and requires all expectations to be satisfied for the test to pass.
+
+Expectations work with both the Anthropic format and the standard format:
+
+```yaml
+tests:
+  - name: Code generation test
+    prompt: "Write a sorting function"
+    expected: "Should produce a working sort"
+    expectations:
+      - "The output includes a function definition"
+      - "The function handles empty arrays"
+      - "The function returns a sorted array"
+```
+
+Both `evals/evals.json` and co-located `SKILL.eval.yml` files are detected. If a skill directory contains both, both are recognized (the last detected eval file is used for pairing).
+
 ## How Evaluation Works
 
 Each test case goes through two stages:

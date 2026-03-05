@@ -216,4 +216,241 @@ tests:
     // Existing eval files without graders should have undefined graders
     expect(evalFile.tests[0].graders).toBeUndefined();
   });
+
+  it("parses Anthropic-format evals.json with evals key, id, and expected_output", () => {
+    const anthropicEvalPath = path.join(TEST_DIR, "anthropic-evals.json");
+    fs.writeFileSync(
+      anthropicEvalPath,
+      JSON.stringify({
+        skill_name: "my-anthropic-skill",
+        evals: [
+          {
+            id: 1,
+            prompt: "Write a hello world function",
+            expected_output: "Should produce a working function",
+            files: ["evals/files/sample.py"],
+            expectations: [
+              "The output includes a function definition",
+              "The function prints hello world",
+            ],
+          },
+          {
+            id: 2,
+            prompt: "Explain recursion",
+            expected_output: "Should explain recursion clearly",
+          },
+        ],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: anthropicEvalPath,
+      relativePath: "anthropic-evals.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    expect(evalFile.skillPath).toBe("my-anthropic-skill");
+    expect(evalFile.tests).toHaveLength(2);
+
+    // First test case
+    expect(evalFile.tests[0].name).toBe("eval-1");
+    expect(evalFile.tests[0].id).toBe(1);
+    expect(evalFile.tests[0].prompt).toBe("Write a hello world function");
+    expect(evalFile.tests[0].expected).toBe("Should produce a working function");
+    expect(evalFile.tests[0].files).toEqual(["evals/files/sample.py"]);
+    expect(evalFile.tests[0].expectations).toEqual([
+      "The output includes a function definition",
+      "The function prints hello world",
+    ]);
+
+    // Second test case (no files/expectations)
+    expect(evalFile.tests[1].name).toBe("eval-2");
+    expect(evalFile.tests[1].id).toBe(2);
+    expect(evalFile.tests[1].expected).toBe("Should explain recursion clearly");
+    expect(evalFile.tests[1].files).toBeUndefined();
+    expect(evalFile.tests[1].expectations).toBeUndefined();
+  });
+
+  it("maps skill_name to skillPath for Anthropic format", () => {
+    const evalPath = path.join(TEST_DIR, "skill-name-test.json");
+    fs.writeFileSync(
+      evalPath,
+      JSON.stringify({
+        skill_name: "special-skill",
+        evals: [{ id: 1, prompt: "test", expected_output: "result" }],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalPath,
+      relativePath: "skill-name-test.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+    expect(evalFile.skillPath).toBe("special-skill");
+  });
+
+  it("preserves backward compatibility with tests/test_cases keys", () => {
+    const file: DetectedFile = {
+      absolutePath: path.join(TEST_DIR, "my-skill", "SKILL.eval.yml"),
+      relativePath: path.join("my-skill", "SKILL.eval.yml"),
+      type: "eval",
+      format: "yaml",
+      skillDirName: "my-skill",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    // Existing format should still work unchanged
+    expect(evalFile.skillPath).toBe("my-skill");
+    expect(evalFile.tests).toHaveLength(2);
+    expect(evalFile.tests[0].name).toBe("Basic test");
+    expect(evalFile.tests[0].expected).toBe("Should greet back");
+    expect(evalFile.tests[0].id).toBeUndefined();
+    expect(evalFile.tests[0].files).toBeUndefined();
+    expect(evalFile.tests[0].expectations).toBeUndefined();
+  });
+
+  it("falls back to skill field when skill_name is not present", () => {
+    const evalPath = path.join(TEST_DIR, "fallback-skill.json");
+    fs.writeFileSync(
+      evalPath,
+      JSON.stringify({
+        skill: "fallback-skill",
+        tests: [{ name: "test", prompt: "hello", expected: "world" }],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalPath,
+      relativePath: "fallback-skill.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+    expect(evalFile.skillPath).toBe("fallback-skill");
+    expect(evalFile.tests[0].name).toBe("test");
+  });
+
+  it("preserves empty files array (not converted to undefined)", () => {
+    const evalPath = path.join(TEST_DIR, "empty-files-eval.json");
+    fs.writeFileSync(
+      evalPath,
+      JSON.stringify({
+        skill_name: "empty-files-skill",
+        evals: [
+          {
+            id: 1,
+            prompt: "Test prompt",
+            expected_output: "Expected result",
+            files: [],
+            expectations: ["The output is correct"],
+          },
+        ],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalPath,
+      relativePath: "empty-files-eval.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    expect(evalFile.tests[0].files).toBeDefined();
+    expect(evalFile.tests[0].files).toEqual([]);
+    expect(Array.isArray(evalFile.tests[0].files)).toBe(true);
+  });
+
+  it("uses id for name in Anthropic format even when name is also present", () => {
+    const evalPath = path.join(TEST_DIR, "both-name-and-id.json");
+    fs.writeFileSync(
+      evalPath,
+      JSON.stringify({
+        skill_name: "test-skill",
+        evals: [
+          {
+            id: 42,
+            name: "custom-name",
+            prompt: "test",
+            expected_output: "result",
+          },
+        ],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalPath,
+      relativePath: "both-name-and-id.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    // In Anthropic format, id takes precedence for the name
+    expect(evalFile.tests[0].name).toBe("eval-42");
+    expect(evalFile.tests[0].id).toBe(42);
+  });
+
+  it("handles Anthropic format with non-numeric id gracefully", () => {
+    const evalPath = path.join(TEST_DIR, "string-id.json");
+    fs.writeFileSync(
+      evalPath,
+      JSON.stringify({
+        skill_name: "test-skill",
+        evals: [
+          {
+            id: "custom-1",
+            prompt: "test",
+            expected_output: "result",
+          },
+        ],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalPath,
+      relativePath: "string-id.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    // String id: name is derived from id, but id field is undefined (non-numeric)
+    expect(evalFile.tests[0].name).toBe("eval-custom-1");
+    expect(evalFile.tests[0].id).toBeUndefined();
+  });
+
+  it("returns empty tests array for Anthropic format with empty evals", () => {
+    const evalPath = path.join(TEST_DIR, "empty-evals.json");
+    fs.writeFileSync(
+      evalPath,
+      JSON.stringify({
+        skill_name: "empty-skill",
+        evals: [],
+      }),
+    );
+
+    const file: DetectedFile = {
+      absolutePath: evalPath,
+      relativePath: "empty-evals.json",
+      type: "eval",
+      format: "json",
+    };
+
+    const evalFile = parseEvalFile(file);
+
+    expect(evalFile.skillPath).toBe("empty-skill");
+    expect(evalFile.tests).toEqual([]);
+  });
 });

@@ -60,6 +60,12 @@ export interface EvalTestCase {
   prompt: string;
   /** Expected behavior or output pattern */
   expected: string;
+  /** Optional: numeric id from Anthropic evals.json format */
+  id?: number;
+  /** Optional: associated files from Anthropic evals.json format */
+  files?: string[];
+  /** Optional: explicit expectations the LLM judge must verify */
+  expectations?: string[];
   /** Optional: regex pattern the output must match */
   match_pattern?: string;
   /** Optional: keywords that must appear in the output */

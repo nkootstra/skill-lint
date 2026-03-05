@@ -39,22 +39,43 @@ export function parseEvalFile(file: DetectedFile): EvalFile {
   }
 
   const obj = parsed as Record<string, unknown>;
-  const tests = (obj.tests ?? obj.test_cases ?? []) as EvalTestCase[];
-  const skillPath = (obj.skill ?? "") as string;
+
+  // Support Anthropic format: `evals` array key + `skill_name`
+  const rawTests = (obj.tests ?? obj.test_cases ?? obj.evals ?? []) as Record<string, unknown>[];
+  const skillPath = ((obj.skill ?? obj.skill_name ?? "") as string);
+
+  // Detect Anthropic format: presence of `evals` key or entries with `id`/`expected_output`
+  const isAnthropicFormat = "evals" in obj;
 
   return {
     filePath: file.absolutePath,
     skillPath,
-    tests: tests.map((t) => ({
-      name: t.name ?? "Unnamed test",
-      prompt: t.prompt,
-      expected: t.expected ?? "",
-      match_pattern: t.match_pattern,
-      required_keywords: t.required_keywords,
-      forbidden_keywords: t.forbidden_keywords,
-      max_tokens: t.max_tokens,
-      graders: parseGraders(t.graders),
-    })),
+    tests: rawTests.map((t) => normalizeTestCase(t, isAnthropicFormat)),
+  };
+}
+
+function normalizeTestCase(
+  t: Record<string, unknown>,
+  isAnthropicFormat: boolean,
+): EvalTestCase {
+  const name = isAnthropicFormat && t.id != null
+    ? `eval-${t.id}`
+    : ((t.name as string) ?? "Unnamed test");
+
+  const expected = ((t.expected ?? t.expected_output ?? "") as string);
+
+  return {
+    name,
+    prompt: t.prompt as string,
+    expected,
+    id: typeof t.id === "number" ? t.id : undefined,
+    files: Array.isArray(t.files) ? (t.files as string[]) : undefined,
+    expectations: Array.isArray(t.expectations) ? (t.expectations as string[]) : undefined,
+    match_pattern: t.match_pattern as string | undefined,
+    required_keywords: t.required_keywords as string[] | undefined,
+    forbidden_keywords: t.forbidden_keywords as string[] | undefined,
+    max_tokens: t.max_tokens as number | undefined,
+    graders: parseGraders(t.graders),
   };
 }
 
