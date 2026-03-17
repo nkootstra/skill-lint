@@ -56519,6 +56519,12 @@ const providerConfigSchema = discriminatedUnionType("type", [
         cli_path: stringType().default(""),
     }),
 ]);
+const evalPresetSchema = enumType(["smoke", "reliable", "regression"]);
+const EVAL_PRESET_TRIALS = {
+    smoke: 3,
+    reliable: 10,
+    regression: 25,
+};
 const configSchema = objectType({
     skills_path: stringType().default("skills"),
     skill_filename: stringType().default("SKILL.md").describe("Default skill filename within each skill directory"),
@@ -56527,9 +56533,12 @@ const configSchema = objectType({
     rubric: rubricSchema.default({}),
     fail_on: enumType(["error", "warning", "never"]).default("error"),
     parallel_evals: numberType().min(1).max(10).default(3),
+    eval_preset: evalPresetSchema
+        .optional()
+        .describe("Eval preset: smoke (3 trials), reliable (10 trials), regression (25 trials). Overridden by explicit eval_trials."),
     eval_trials: numberType()
         .min(1)
-        .max(10)
+        .max(50)
         .default(1)
         .describe("Number of trials per eval test case for pass@k/pass^k metrics (1 = no multi-trial)"),
     redact_secrets: booleanType()
@@ -56576,7 +56585,13 @@ function loadConfig(configPath) {
             issues,
         }));
     }
-    return Result.ok(parsed.data);
+    const config = parsed.data;
+    // Resolve eval_preset to eval_trials when eval_trials is still the default (1)
+    if (config.eval_preset && config.eval_trials === 1) {
+        config.eval_trials = EVAL_PRESET_TRIALS[config.eval_preset];
+        core.info(`Resolved eval_preset "${config.eval_preset}" to eval_trials=${config.eval_trials}`);
+    }
+    return Result.ok(config);
 }
 function getActionInputOverrides() {
     const overrides = {};
@@ -56586,6 +56601,9 @@ function getActionInputOverrides() {
     const parallelEvals = core.getInput("parallel_evals");
     if (parallelEvals)
         overrides.parallel_evals = parseInt(parallelEvals, 10);
+    const evalPreset = core.getInput("eval_preset");
+    if (evalPreset)
+        overrides.eval_preset = evalPreset;
     const evalTrials = core.getInput("eval_trials");
     if (evalTrials)
         overrides.eval_trials = parseInt(evalTrials, 10);
@@ -57193,6 +57211,8 @@ function extractJSON(raw) {
 
 
 
+
+
 const execFileAsync = (0,external_util_.promisify)(external_child_process_.execFile);
 async function runEvals(skill, evalFile, provider, parallelLimit = 3, trials = 1) {
     const results = [];
@@ -57215,10 +57235,11 @@ Instructions:
 ${skill.instructions}
 
 Follow the skill instructions precisely when responding.`;
-    // Step 1: Get the skill's response
+    // Step 1: Get the skill's response, injecting any referenced files into the prompt
+    const userContent = injectTestFiles(testCase, skill.filePath);
     const skillResponse = await provider.complete([
         { role: "system", content: systemPrompt },
-        { role: "user", content: testCase.prompt },
+        { role: "user", content: userContent },
     ]);
     if (skillResponse.isErr()) {
         core.warning(`  Eval "${testCase.name}"${trialLabel} provider error: ${skillResponse.error.message}`);
@@ -57377,16 +57398,14 @@ async function runScriptGrader(grader, output) {
             timeout: 30_000,
         });
         const latency = Date.now() - startTime;
-        // Try to parse stdout as a score (0.0-1.0), default to 1.0 on success
-        const trimmed = stdout.trim();
-        const parsedScore = parseFloat(trimmed);
-        const score = !isNaN(parsedScore) && parsedScore >= 0 && parsedScore <= 1 ? parsedScore : 1.0;
+        const { score, details, checks } = parseScriptGraderOutput(stdout);
         return {
             graderResult: {
                 grader_type: "script",
                 score,
                 weight: grader.weight,
-                details: trimmed || "Script passed",
+                details,
+                checks,
             },
             tokens: 0,
             latency,
@@ -57406,6 +57425,50 @@ async function runScriptGrader(grader, output) {
             latency,
         };
     }
+}
+// --- File injection ---
+function injectTestFiles(testCase, skillFilePath) {
+    if (!testCase.files || testCase.files.length === 0) {
+        return testCase.prompt;
+    }
+    const skillDir = external_path_.dirname(skillFilePath);
+    const fileSections = [];
+    for (const filePath of testCase.files) {
+        const resolved = external_path_.resolve(skillDir, filePath);
+        try {
+            const content = external_fs_.readFileSync(resolved, "utf-8");
+            fileSections.push(`### ${filePath}\n\`\`\`\n${content}\n\`\`\``);
+        }
+        catch {
+            core.warning(`  File not found for eval "${testCase.name}": ${resolved}`);
+        }
+    }
+    if (fileSections.length === 0) {
+        return testCase.prompt;
+    }
+    return `${testCase.prompt}\n\n## Files\n\n${fileSections.join("\n\n")}`;
+}
+function parseScriptGraderOutput(stdout) {
+    const trimmed = stdout.trim();
+    // Try structured JSON first
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed.score === "number" && parsed.score >= 0 && parsed.score <= 1) {
+            const checks = Array.isArray(parsed.checks)
+                ? parsed.checks.map((c) => ({ name: c.name, passed: c.passed, details: c.details }))
+                : undefined;
+            const details = parsed.details
+                ?? (checks ? checks.map((c) => `${c.passed ? "PASS" : "FAIL"}: ${c.name}${c.details ? ` — ${c.details}` : ""}`).join("; ") : "Script passed");
+            return { score: parsed.score, details, checks };
+        }
+    }
+    catch {
+        // Not JSON, fall through to bare float
+    }
+    // Fall back to bare float
+    const parsedScore = parseFloat(trimmed);
+    const score = !isNaN(parsedScore) && parsedScore >= 0 && parsedScore <= 1 ? parsedScore : 1.0;
+    return { score, details: trimmed || "Script passed" };
 }
 async function judgeResponse(testCase, response, provider) {
     let expectationsBlock = "";

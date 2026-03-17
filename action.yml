@@ -49,8 +49,11 @@ inputs:
     description: "Number of evals to run in parallel (1-10, lower for rate-limited APIs)"
     required: false
     default: "3"
+  eval_preset:
+    description: "Eval preset: smoke (3 trials), reliable (10 trials), or regression (25 trials). Overridden by explicit eval_trials."
+    required: false
   eval_trials:
-    description: "Number of trials per eval test case for pass@k/pass^k statistical metrics (1-10, default 1 for single-run)"
+    description: "Number of trials per eval test case for pass@k/pass^k statistical metrics (1-50, default 1 for single-run)"
     required: false
     default: "1"
   min_pass_rate:
