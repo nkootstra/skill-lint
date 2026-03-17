@@ -123,7 +123,7 @@ describe("configSchema", () => {
 
   it("should reject eval_trials out of bounds", () => {
     expect(() => configSchema.parse({ eval_trials: 0 })).toThrow();
-    expect(() => configSchema.parse({ eval_trials: 11 })).toThrow();
+    expect(() => configSchema.parse({ eval_trials: 51 })).toThrow();
   });
 
   it("should default redact_secrets to true", () => {

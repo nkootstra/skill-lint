@@ -3,8 +3,10 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { Result } from "better-result";
 import { ProviderParseError } from "../errors.js";
+import * as fs from "fs";
+import * as path from "path";
 import type { LLMProvider } from "../providers/types.js";
-import type { EvalFile, EvalResult, EvalTestCase, GraderConfig, GraderResult, Skill } from "../skills/types.js";
+import type { EvalFile, EvalResult, EvalTestCase, GraderCheck, GraderConfig, GraderResult, Skill } from "../skills/types.js";
 import { extractJSON } from "../utils/json.js";
 
 const execFileAsync = promisify(execFile);
@@ -52,10 +54,11 @@ ${skill.instructions}
 
 Follow the skill instructions precisely when responding.`;
 
-  // Step 1: Get the skill's response
+  // Step 1: Get the skill's response, injecting any referenced files into the prompt
+  const userContent = injectTestFiles(testCase, skill.filePath);
   const skillResponse = await provider.complete([
     { role: "system", content: systemPrompt },
-    { role: "user", content: testCase.prompt },
+    { role: "user", content: userContent },
   ]);
 
   if (skillResponse.isErr()) {
@@ -266,18 +269,15 @@ async function runScriptGrader(
     });
 
     const latency = Date.now() - startTime;
-
-    // Try to parse stdout as a score (0.0-1.0), default to 1.0 on success
-    const trimmed = stdout.trim();
-    const parsedScore = parseFloat(trimmed);
-    const score = !isNaN(parsedScore) && parsedScore >= 0 && parsedScore <= 1 ? parsedScore : 1.0;
+    const { score, details, checks } = parseScriptGraderOutput(stdout);
 
     return {
       graderResult: {
         grader_type: "script",
         score,
         weight: grader.weight,
-        details: trimmed || "Script passed",
+        details,
+        checks,
       },
       tokens: 0,
       latency,
@@ -297,6 +297,67 @@ async function runScriptGrader(
       latency,
     };
   }
+}
+
+// --- File injection ---
+
+function injectTestFiles(testCase: EvalTestCase, skillFilePath: string): string {
+  if (!testCase.files || testCase.files.length === 0) {
+    return testCase.prompt;
+  }
+
+  const skillDir = path.dirname(skillFilePath);
+  const fileSections: string[] = [];
+
+  for (const filePath of testCase.files) {
+    const resolved = path.resolve(skillDir, filePath);
+    try {
+      const content = fs.readFileSync(resolved, "utf-8");
+      fileSections.push(`### ${filePath}\n\`\`\`\n${content}\n\`\`\``);
+    } catch {
+      core.warning(`  File not found for eval "${testCase.name}": ${resolved}`);
+    }
+  }
+
+  if (fileSections.length === 0) {
+    return testCase.prompt;
+  }
+
+  return `${testCase.prompt}\n\n## Files\n\n${fileSections.join("\n\n")}`;
+}
+
+// --- Structured script grader output parsing ---
+
+interface StructuredGraderOutput {
+  score: number;
+  details?: string;
+  checks?: Array<{ name: string; passed: boolean; details?: string }>;
+}
+
+function parseScriptGraderOutput(stdout: string): { score: number; details: string; checks?: GraderCheck[] } {
+  const trimmed = stdout.trim();
+
+  // Try structured JSON first
+  try {
+    const parsed = JSON.parse(trimmed) as StructuredGraderOutput;
+    if (typeof parsed.score === "number" && parsed.score >= 0 && parsed.score <= 1) {
+      const checks: GraderCheck[] | undefined = Array.isArray(parsed.checks)
+        ? parsed.checks.map((c) => ({ name: c.name, passed: c.passed, details: c.details }))
+        : undefined;
+
+      const details = parsed.details
+        ?? (checks ? checks.map((c) => `${c.passed ? "PASS" : "FAIL"}: ${c.name}${c.details ? ` — ${c.details}` : ""}`).join("; ") : "Script passed");
+
+      return { score: parsed.score, details, checks };
+    }
+  } catch {
+    // Not JSON, fall through to bare float
+  }
+
+  // Fall back to bare float
+  const parsedScore = parseFloat(trimmed);
+  const score = !isNaN(parsedScore) && parsedScore >= 0 && parsedScore <= 1 ? parsedScore : 1.0;
+  return { score, details: trimmed || "Script passed" };
 }
 
 // --- Legacy grading (unchanged) ---

@@ -95,11 +95,19 @@ export interface LintIssue {
   suggestion?: string;
 }
 
+export interface GraderCheck {
+  name: string;
+  passed: boolean;
+  details?: string;
+}
+
 export interface GraderResult {
   grader_type: string;
   score: number;
   weight: number;
   details: string;
+  /** Granular pass/fail checks from structured script grader output */
+  checks?: GraderCheck[];
 }
 
 export interface EvalResult {

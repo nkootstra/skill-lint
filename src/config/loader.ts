@@ -4,7 +4,7 @@ import * as path from "path";
 import { Result } from "better-result";
 import { parse as parseYaml } from "yaml";
 import { ConfigValidationError } from "../errors.js";
-import { configSchema, type Config, type ProviderConfig } from "./schema.js";
+import { configSchema, EVAL_PRESET_TRIALS, type Config, type ProviderConfig } from "./schema.js";
 
 export function loadConfig(
   configPath: string,
@@ -32,7 +32,15 @@ export function loadConfig(
     }));
   }
 
-  return Result.ok(parsed.data);
+  const config = parsed.data;
+
+  // Resolve eval_preset to eval_trials when eval_trials is still the default (1)
+  if (config.eval_preset && config.eval_trials === 1) {
+    config.eval_trials = EVAL_PRESET_TRIALS[config.eval_preset];
+    core.info(`Resolved eval_preset "${config.eval_preset}" to eval_trials=${config.eval_trials}`);
+  }
+
+  return Result.ok(config);
 }
 
 function getActionInputOverrides(): Record<string, unknown> {
@@ -43,6 +51,9 @@ function getActionInputOverrides(): Record<string, unknown> {
 
   const parallelEvals = core.getInput("parallel_evals");
   if (parallelEvals) overrides.parallel_evals = parseInt(parallelEvals, 10);
+
+  const evalPreset = core.getInput("eval_preset");
+  if (evalPreset) overrides.eval_preset = evalPreset;
 
   const evalTrials = core.getInput("eval_trials");
   if (evalTrials) overrides.eval_trials = parseInt(evalTrials, 10);

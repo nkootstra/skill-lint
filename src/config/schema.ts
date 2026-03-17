@@ -55,6 +55,14 @@ export const providerConfigSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+export const evalPresetSchema = z.enum(["smoke", "reliable", "regression"]);
+
+export const EVAL_PRESET_TRIALS: Record<z.infer<typeof evalPresetSchema>, number> = {
+  smoke: 3,
+  reliable: 10,
+  regression: 25,
+};
+
 export const configSchema = z.object({
   skills_path: z.string().default("skills"),
   skill_filename: z.string().default("SKILL.md").describe("Default skill filename within each skill directory"),
@@ -63,10 +71,13 @@ export const configSchema = z.object({
   rubric: rubricSchema.default({}),
   fail_on: z.enum(["error", "warning", "never"]).default("error"),
   parallel_evals: z.number().min(1).max(10).default(3),
+  eval_preset: evalPresetSchema
+    .optional()
+    .describe("Eval preset: smoke (3 trials), reliable (10 trials), regression (25 trials). Overridden by explicit eval_trials."),
   eval_trials: z
     .number()
     .min(1)
-    .max(10)
+    .max(50)
     .default(1)
     .describe("Number of trials per eval test case for pass@k/pass^k metrics (1 = no multi-trial)"),
   redact_secrets: z
