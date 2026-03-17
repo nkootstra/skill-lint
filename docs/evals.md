@@ -4,15 +4,24 @@ Evals are test cases that verify your skill works correctly. skill-lint supports
 
 ## evals.json Format (Recommended)
 
-Place an `evals.json` file inside an `evals/` subdirectory of your skill:
+Place an `evals.json` file directly in your skill directory or inside an `evals/` subdirectory:
+
+```
+skills/
+  my-skill/
+    SKILL.md
+    evals.json              # Option 1: directly in skill folder
+```
 
 ```
 skills/
   my-skill/
     SKILL.md
     evals/
-      evals.json
+      evals.json            # Option 2: in evals/ subdirectory
 ```
+
+Both placements are auto-detected. The direct placement (`skills/my-skill/evals.json`) is simpler for most cases; the `evals/` subdirectory is useful when you also have fixture files alongside your evals.
 
 ```json
 {

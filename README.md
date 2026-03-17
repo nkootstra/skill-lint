@@ -45,12 +45,15 @@ Skill Lint expects skills in this layout:
 skills/
   code-review/
     SKILL.md              # Skill definition (frontmatter + instructions)
-    evals/
-      evals.json          # Evaluation test cases (recommended)
+    evals.json            # Evaluation test cases (recommended)
     references/           # Reference files loaded on demand
       security-checklist.md
       quality-patterns.md
   another-skill/
+    SKILL.md
+    evals/
+      evals.json          # Also supported: evals/ subdirectory
+  legacy-skill/
     SKILL.md
     SKILL.eval.yml        # Alternative: co-located YAML eval file
 ```
