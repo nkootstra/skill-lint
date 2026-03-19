@@ -9,8 +9,8 @@ export function formatComment(
   passed: boolean,
 ): string {
   const parts: string[] = [
-    "<!-- skill-lint-report -->",
-    `## Skill Lint Report ${passed ? "- All Checks Passed" : "- Issues Found"}`,
+    "<!-- skill-eval-report -->",
+    `## Skill Eval Report ${passed ? "- All Checks Passed" : "- Issues Found"}`,
     "",
   ];
 
@@ -138,7 +138,7 @@ export function formatComment(
 
   parts.push(
     "",
-    "*Powered by [skill-lint](https://github.com/nkootstra/skill-lint)*",
+    "*Powered by [skill-eval](https://github.com/nkootstra/skill-eval)*",
   );
 
   return parts.join("\n");

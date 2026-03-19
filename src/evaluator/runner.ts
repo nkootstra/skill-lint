@@ -264,7 +264,7 @@ async function runScriptGrader(
 
   try {
     const { stdout } = await execFileAsync("bash", ["-c", grader.command], {
-      env: { ...process.env, SKILL_LINT_OUTPUT: output },
+      env: { ...process.env, SKILL_EVAL_OUTPUT: output, SKILL_LINT_OUTPUT: output },
       timeout: 30_000,
     });
 

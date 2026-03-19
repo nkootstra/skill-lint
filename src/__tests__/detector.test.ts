@@ -58,6 +58,11 @@ beforeAll(() => {
     JSON.stringify({ skill_name: "dual-eval-skill", evals: [] }),
   );
 
+  // Skill directory with a README.md that should NOT be detected as a skill
+  fs.mkdirSync(path.join(TEST_DIR, "has-readme"), { recursive: true });
+  fs.writeFileSync(path.join(TEST_DIR, "has-readme", "SKILL.md"), "# Has Readme Skill");
+  fs.writeFileSync(path.join(TEST_DIR, "has-readme", "README.md"), "# Documentation — not a skill");
+
   // Flat layout: skills/my-skill.yml at root level
   fs.writeFileSync(path.join(TEST_DIR, "flat-skill.yml"), "title: Flat");
   fs.writeFileSync(path.join(TEST_DIR, "not-a-skill.txt"), "hello");
@@ -106,6 +111,21 @@ describe("detectSkillFiles", () => {
     const refFile = files.find((f) => f.absolutePath.includes("references"));
 
     expect(refFile).toBeUndefined();
+  });
+
+  it("does not detect README.md as a skill file in directory layout", () => {
+    const files = detectSkillFiles(TEST_DIR);
+    const readme = files.find(
+      (f) => f.type === "skill" && f.absolutePath.includes("README.md"),
+    );
+    expect(readme).toBeUndefined();
+
+    // But SKILL.md in the same directory IS detected
+    const skill = files.find(
+      (f) => f.type === "skill" && f.skillDirName === "has-readme",
+    );
+    expect(skill).toBeDefined();
+    expect(skill!.relativePath).toBe(path.join("has-readme", "SKILL.md"));
   });
 
   it("filters to changed files when provided", () => {

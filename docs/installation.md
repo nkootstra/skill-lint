@@ -2,20 +2,20 @@
 
 ## Installing the GitHub Action
 
-Skill Lint runs as a GitHub Action — no separate server needed. Add a workflow file to your repository:
+Skill Eval runs as a GitHub Action — no separate server needed. Add a workflow file to your repository:
 
 ### Step 1: Create the workflow
 
-Create `.github/workflows/skill-lint.yml`:
+Create `.github/workflows/skill-eval.yml`:
 
 ```yaml
-name: Skill Lint
+name: Skill Eval
 
 on:
   pull_request:
     paths:
       - "skills/**"
-      - ".skill-lint.yml"
+      - ".skill-eval.yml"
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0  # Required for A/B comparison
 
-      - uses: nkootstra/skill-lint@main
+      - uses: nkootstra/skill-eval@main
         with:
           provider: anthropic
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -42,7 +42,7 @@ Go to **Settings > Secrets and variables > Actions** in your repository and add 
 
 ### Step 3: Add a config file (optional)
 
-Copy `.skill-lint.yml.example` to `.skill-lint.yml` in your repo root to customize behavior.
+Copy `.skill-eval.yml.example` to `.skill-eval.yml` in your repo root to customize behavior.
 
 ### Step 4: Add skill files
 
@@ -59,7 +59,7 @@ skills/
 
 ## How It Triggers
 
-The action runs on every pull request that modifies files in the `skills/` directory (or `.skill-lint.yml`). It only evaluates skills that were changed in the PR.
+The action runs on every pull request that modifies files in the `skills/` directory (or `.skill-eval.yml`). It only evaluates skills that were changed in the PR.
 
 Changes to reference files inside a skill directory also trigger evaluation for that skill.
 
@@ -76,7 +76,7 @@ The action provides three outputs you can use in subsequent workflow steps:
 Example usage:
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   id: lint
   with:
     provider: anthropic
@@ -89,8 +89,8 @@ Example usage:
 
 ```bash
 # Clone the repo
-git clone https://github.com/nkootstra/skill-lint.git
-cd skill-lint
+git clone https://github.com/nkootstra/skill-eval.git
+cd skill-eval
 
 # Install dependencies
 npm install

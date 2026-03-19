@@ -49,7 +49,7 @@ export interface GraderConfig {
   forbidden_keywords?: string[];
   /** For llm_rubric: expected behavior description */
   expected?: string;
-  /** For script: shell command to run. Receives agent output via $SKILL_LINT_OUTPUT env var */
+  /** For script: shell command to run. Receives agent output via $SKILL_EVAL_OUTPUT env var */
   command?: string;
 }
 

@@ -1,4 +1,4 @@
-name: "Skill Lint"
+name: "Skill Eval"
 description: "Evaluate and benchmark agent skills in pull requests with automated testing and suggestions."
 author: "nkootstra"
 
@@ -35,9 +35,9 @@ inputs:
     required: false
     default: ""
   config_path:
-    description: "Path to .skill-lint.yml config file"
+    description: "Path to .skill-eval.yml config file"
     required: false
-    default: ".skill-lint.yml"
+    default: ".skill-eval.yml"
   skills_path:
     description: "Path to skills directory (overrides config file)"
     required: false

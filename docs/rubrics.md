@@ -1,6 +1,6 @@
 # Custom Rubrics
 
-Rubrics control what the linter checks for. Configure them in `.skill-lint.yml`.
+Rubrics control what the linter checks for. Configure them in `.skill-eval.yml`.
 
 ## Built-in Rules
 
@@ -23,7 +23,7 @@ Additionally, these rules always run:
 You can define custom rules that are evaluated by the LLM:
 
 ```yaml
-# .skill-lint.yml
+# .skill-eval.yml
 rubric:
   rules:
     - id: clear-instructions
