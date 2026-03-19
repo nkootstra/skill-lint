@@ -89,7 +89,7 @@ export class GitHubReporter {
     });
 
     const existing = comments.find(
-      (c) => c.body?.includes("<!-- skill-lint-report -->") && c.user?.login === "github-actions[bot]",
+      (c) => (c.body?.includes("<!-- skill-eval-report -->") || c.body?.includes("<!-- skill-lint-report -->")) && c.user?.login === "github-actions[bot]",
     );
 
     if (existing) {

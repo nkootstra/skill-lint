@@ -1,22 +1,22 @@
-# Skill Lint
+# Skill Eval
 
 A GitHub Action that evaluates, benchmarks, and refines agent skills on pull requests.
 
-When you add or update skill files in a PR, Skill Lint runs a full evaluation pipeline — lint, eval, A/B compare, benchmark, and auto-suggest — then posts results as a PR comment and check status.
+When you add or update skill files in a PR, Skill Eval runs a full evaluation pipeline — lint, eval, A/B compare, benchmark, and auto-suggest — then posts results as a PR comment and check status.
 
 ## Quick Start
 
 Add this workflow to your repository:
 
 ```yaml
-# .github/workflows/skill-lint.yml
-name: Skill Lint
+# .github/workflows/skill-eval.yml
+name: Skill Eval
 
 on:
   pull_request:
     paths:
       - "skills/**"
-      - ".skill-lint.yml"
+      - ".skill-eval.yml"
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: nkootstra/skill-lint@main
+      - uses: nkootstra/skill-eval@main
         with:
           provider: anthropic
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -39,7 +39,7 @@ jobs:
 
 ## Skill Directory Structure
 
-Skill Lint expects skills in this layout:
+Skill Eval expects skills in this layout:
 
 ```
 skills/
@@ -110,7 +110,7 @@ See [docs/providers.md](docs/providers.md) for detailed setup instructions.
 
 ## Configuration
 
-Create `.skill-lint.yml` in your repo root. See [.skill-lint.yml.example](.skill-lint.yml.example) for full reference.
+Create `.skill-eval.yml` in your repo root. See [.skill-eval.yml.example](.skill-eval.yml.example) for full reference.
 
 ## Pipeline
 

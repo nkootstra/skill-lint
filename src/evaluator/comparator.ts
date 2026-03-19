@@ -28,7 +28,7 @@ export async function compareWithBase(
   }
 
   // Write base content to temp file for parsing
-  const tempDir = path.join(process.env.RUNNER_TEMP ?? "/tmp", "skill-lint-base");
+  const tempDir = path.join(process.env.RUNNER_TEMP ?? "/tmp", "skill-eval-base");
   fs.mkdirSync(tempDir, { recursive: true });
   const tempFile = path.join(tempDir, path.basename(skillPath));
   fs.writeFileSync(tempFile, baseContent.value);

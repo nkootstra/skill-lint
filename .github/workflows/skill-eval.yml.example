@@ -1,11 +1,11 @@
-# Example workflow: Add this to your repository as .github/workflows/skill-lint.yml
-name: Skill Lint
+# Example workflow: Add this to your repository as .github/workflows/skill-eval.yml
+name: Skill Eval
 
 on:
   pull_request:
     paths:
       - "skills/**"
-      - ".skill-lint.yml"
+      - ".skill-eval.yml"
 
 permissions:
   contents: read
@@ -21,21 +21,21 @@ jobs:
           fetch-depth: 0  # Needed for A/B comparison with base branch
 
       # Option 1: Use with Anthropic API
-      - uses: nkootstra/skill-lint@main
+      - uses: nkootstra/skill-eval@main
         with:
           provider: anthropic
           model: claude-sonnet-4-20250514
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       # Option 2: Use with OpenAI
-      # - uses: nkootstra/skill-lint@main
+      # - uses: nkootstra/skill-eval@main
       #   with:
       #     provider: openai
       #     model: gpt-4o
       #     openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 
       # Option 3: Use with LiteLLM
-      # - uses: nkootstra/skill-lint@main
+      # - uses: nkootstra/skill-eval@main
       #   with:
       #     provider: litellm
       #     model: "anthropic/claude-sonnet-4-20250514"
@@ -43,6 +43,6 @@ jobs:
       #     litellm_api_base: "https://your-litellm-proxy.com"
 
       # Option 4: Use with Claude Code (Max/Pro subscription)
-      # - uses: nkootstra/skill-lint@main
+      # - uses: nkootstra/skill-eval@main
       #   with:
       #     provider: claude-code
