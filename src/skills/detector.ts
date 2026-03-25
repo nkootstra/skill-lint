@@ -132,9 +132,9 @@ function detectInSkillDirectory(
         continue;
       }
 
-      // Check if it's a skill file
+      // Check if it's a skill file — only recognize SKILL.md (not README.md or other markdown)
       const format = SKILL_EXTENSIONS[ext];
-      if (format) {
+      if (format && isSkillFile(entry.name)) {
         detected.push({
           absolutePath: fullPath,
           relativePath: relPath,
@@ -270,6 +270,12 @@ export function getSkillReferences(
       name: e.name,
       filePath: path.join(refsDir, e.name),
     }));
+}
+
+/** Only SKILL.md (case-insensitive) is recognized as a skill file in directory-based layouts. */
+function isSkillFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return lower === "skill.md" || lower === "skill.yml" || lower === "skill.yaml" || lower === "skill.json";
 }
 
 function getSkillBaseName(filePath: string): string {

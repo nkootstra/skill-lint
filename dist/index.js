@@ -56565,13 +56565,24 @@ const configSchema = objectType({
 
 
 
-function loadConfig(configPath) {
+function loadConfig(configPath, legacyConfigPath) {
     const fullPath = external_path_.resolve(configPath);
     let rawConfig = {};
     if (external_fs_.existsSync(fullPath)) {
         const content = external_fs_.readFileSync(fullPath, "utf-8");
         rawConfig = (0,dist/* parse */.qg)(content) ?? {};
         core.info(`Loaded config from ${fullPath}`);
+    }
+    else if (legacyConfigPath) {
+        const legacyFullPath = external_path_.resolve(legacyConfigPath);
+        if (external_fs_.existsSync(legacyFullPath)) {
+            const content = external_fs_.readFileSync(legacyFullPath, "utf-8");
+            rawConfig = (0,dist/* parse */.qg)(content) ?? {};
+            core.warning(`Loaded config from deprecated ${legacyConfigPath} — please rename to ${configPath}`);
+        }
+        else {
+            core.info(`No config file found at ${fullPath}, using defaults`);
+        }
     }
     else {
         core.info(`No config file found at ${fullPath}, using defaults`);
@@ -56733,9 +56744,9 @@ function detectInSkillDirectory(rootDir, dirPath, dirName, detected) {
                 });
                 continue;
             }
-            // Check if it's a skill file
+            // Check if it's a skill file — only recognize SKILL.md (not README.md or other markdown)
             const format = SKILL_EXTENSIONS[ext];
-            if (format) {
+            if (format && isSkillFile(entry.name)) {
                 detected.push({
                     absolutePath: fullPath,
                     relativePath: relPath,
@@ -56839,6 +56850,11 @@ function getSkillReferences(skillFilePath) {
         name: e.name,
         filePath: external_path_.join(refsDir, e.name),
     }));
+}
+/** Only SKILL.md (case-insensitive) is recognized as a skill file in directory-based layouts. */
+function isSkillFile(fileName) {
+    const lower = fileName.toLowerCase();
+    return lower === "skill.md" || lower === "skill.yml" || lower === "skill.yaml" || lower === "skill.json";
 }
 function getSkillBaseName(filePath) {
     const base = external_path_.basename(filePath);
@@ -57394,7 +57410,7 @@ async function runScriptGrader(grader, output) {
     const startTime = Date.now();
     try {
         const { stdout } = await execFileAsync("bash", ["-c", grader.command], {
-            env: { ...process.env, SKILL_LINT_OUTPUT: output },
+            env: { ...process.env, SKILL_EVAL_OUTPUT: output, SKILL_LINT_OUTPUT: output },
             timeout: 30_000,
         });
         const latency = Date.now() - startTime;
@@ -57556,7 +57572,7 @@ async function compareWithBase(skillPath, headBenchmark, headEvalResults, config
         return { skill: skillName, base_benchmark: null, head_benchmark: headBenchmark, delta: null };
     }
     // Write base content to temp file for parsing
-    const tempDir = external_path_.join(process.env.RUNNER_TEMP ?? "/tmp", "skill-lint-base");
+    const tempDir = external_path_.join(process.env.RUNNER_TEMP ?? "/tmp", "skill-eval-base");
     external_fs_.mkdirSync(tempDir, { recursive: true });
     const tempFile = external_path_.join(tempDir, external_path_.basename(skillPath));
     external_fs_.writeFileSync(tempFile, baseContent.value);
@@ -69909,8 +69925,8 @@ function redactSecretsDeep(value, secrets) {
 
 function formatComment(results, passed) {
     const parts = [
-        "<!-- skill-lint-report -->",
-        `## Skill Lint Report ${passed ? "- All Checks Passed" : "- Issues Found"}`,
+        "<!-- skill-eval-report -->",
+        `## Skill Eval Report ${passed ? "- All Checks Passed" : "- Issues Found"}`,
         "",
     ];
     // Summary
@@ -69999,7 +70015,7 @@ function formatComment(results, passed) {
     if (comparisons.length > 0) {
         parts.push(formatComparisonTable(comparisons), "");
     }
-    parts.push("", "*Powered by [skill-lint](https://github.com/nkootstra/skill-lint)*");
+    parts.push("", "*Powered by [skill-eval](https://github.com/nkootstra/skill-eval)*");
     return parts.join("\n");
 }
 
@@ -70115,7 +70131,7 @@ class GitHubReporter {
             repo: this.options.repo,
             issue_number: this.options.prNumber,
         });
-        const existing = comments.find((c) => c.body?.includes("<!-- skill-lint-report -->") && c.user?.login === "github-actions[bot]");
+        const existing = comments.find((c) => (c.body?.includes("<!-- skill-eval-report -->") || c.body?.includes("<!-- skill-lint-report -->")) && c.user?.login === "github-actions[bot]");
         if (existing) {
             const { data } = await this.octokit.rest.issues.updateComment({
                 owner: this.options.owner,
@@ -70193,8 +70209,8 @@ async function getBaseBranch() {
 
 async function run() {
     // Load config
-    const configPath = core.getInput("config_path") || ".skill-lint.yml";
-    const configResult = loadConfig(configPath);
+    const configPath = core.getInput("config_path") || ".skill-eval.yml";
+    const configResult = loadConfig(configPath, ".skill-lint.yml");
     if (configResult.isErr()) {
         core.setFailed(configResult.error.message);
         return;

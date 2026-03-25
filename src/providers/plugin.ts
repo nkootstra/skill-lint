@@ -3,7 +3,7 @@ import { ProviderRequestError } from "../errors.js";
 import type { LLMMessage, LLMProvider, LLMResponse } from "./types.js";
 
 /**
- * Plugin interface for extending skill-lint with custom LLM providers.
+ * Plugin interface for extending skill-eval with custom LLM providers.
  */
 export interface ProviderPlugin {
   createProvider(config: Record<string, unknown>): LLMProvider;
@@ -39,7 +39,7 @@ export class CommandProvider implements LLMProvider {
         const { stdout } = await execFileAsync(this.command, this.args, {
           timeout: 300_000,
           maxBuffer: 10 * 1024 * 1024,
-          env: { ...process.env, SKILL_LINT_INPUT: input },
+          env: { ...process.env, SKILL_EVAL_INPUT: input, SKILL_LINT_INPUT: input },
         });
 
         const latency_ms = Date.now() - start;

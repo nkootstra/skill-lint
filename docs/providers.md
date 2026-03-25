@@ -1,6 +1,6 @@
 # Provider Setup
 
-Skill Lint supports four LLM providers. Choose the one that fits your setup.
+Skill Eval supports four LLM providers. Choose the one that fits your setup.
 
 ## Anthropic (API Key)
 
@@ -16,7 +16,7 @@ Use the Anthropic API directly with your API key.
 ### Workflow
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: anthropic
     model: claude-sonnet-4-20250514  # optional, this is the default
@@ -26,7 +26,7 @@ Use the Anthropic API directly with your API key.
 ### Config file
 
 ```yaml
-# .skill-lint.yml
+# .skill-eval.yml
 provider:
   type: anthropic
   model: claude-sonnet-4-20250514
@@ -49,7 +49,7 @@ Use OpenAI's API with your API key.
 ### Workflow
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: openai
     model: gpt-4o  # optional, this is the default
@@ -90,7 +90,7 @@ Use your Claude Pro or Max subscription to run evals. No per-token API billing â
 ### Workflow
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: claude-code
     claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -99,7 +99,7 @@ Use your Claude Pro or Max subscription to run evals. No per-token API billing â
 The default model is `claude-haiku-4-5-20250414` (cheapest, fast). To use a different model:
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: claude-code
     model: sonnet  # also: opus, haiku, or a full model ID
@@ -152,7 +152,7 @@ Run `claude setup-token` again locally and update the GitHub secret.
 You can also authenticate the CLI with an Anthropic API key instead of an OAuth token. Set `ANTHROPIC_API_KEY` as an environment variable in your workflow:
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: claude-code
   env:
@@ -177,7 +177,7 @@ Use any LLM through a [LiteLLM](https://docs.litellm.ai/) proxy. This gives you 
 ### Workflow
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: litellm
     model: "anthropic/claude-sonnet-4-20250514"  # LiteLLM model format
@@ -218,7 +218,7 @@ The LiteLLM provider works with any OpenAI-compatible endpoint, including [OpenR
 **Workflow:**
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: litellm
     model: "z-ai/glm-4.5-air:free"
@@ -246,7 +246,7 @@ You can use Google Gemini models directly through their OpenAI-compatible endpoi
 **Workflow:**
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     provider: litellm
     model: "gemini-3.1-flash-lite-preview"
@@ -283,7 +283,7 @@ provider:
 
 ## Extending with Custom Providers
 
-Skill Lint has a plugin system for adding custom providers. See the `CommandProvider` class in `src/providers/plugin.ts` for wrapping any CLI tool as a provider, or create a JS plugin module:
+Skill Eval has a plugin system for adding custom providers. See the `CommandProvider` class in `src/providers/plugin.ts` for wrapping any CLI tool as a provider, or create a JS plugin module:
 
 ```javascript
 // my-provider.js

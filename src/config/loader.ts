@@ -8,6 +8,7 @@ import { configSchema, EVAL_PRESET_TRIALS, type Config, type ProviderConfig } fr
 
 export function loadConfig(
   configPath: string,
+  legacyConfigPath?: string,
 ): Result<Config, ConfigValidationError> {
   const fullPath = path.resolve(configPath);
 
@@ -17,6 +18,15 @@ export function loadConfig(
     const content = fs.readFileSync(fullPath, "utf-8");
     rawConfig = parseYaml(content) ?? {};
     core.info(`Loaded config from ${fullPath}`);
+  } else if (legacyConfigPath) {
+    const legacyFullPath = path.resolve(legacyConfigPath);
+    if (fs.existsSync(legacyFullPath)) {
+      const content = fs.readFileSync(legacyFullPath, "utf-8");
+      rawConfig = parseYaml(content) ?? {};
+      core.warning(`Loaded config from deprecated ${legacyConfigPath} — please rename to ${configPath}`);
+    } else {
+      core.info(`No config file found at ${fullPath}, using defaults`);
+    }
   } else {
     core.info(`No config file found at ${fullPath}, using defaults`);
   }

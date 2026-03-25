@@ -1,6 +1,6 @@
 # Writing Evals
 
-Evals are test cases that verify your skill works correctly. skill-lint supports two formats: **`evals.json`** (recommended) and `SKILL.eval.yml`.
+Evals are test cases that verify your skill works correctly. skill-eval supports two formats: **`evals.json`** (recommended) and `SKILL.eval.yml`.
 
 ## evals.json Format (Recommended)
 
@@ -69,7 +69,7 @@ This format is compatible with [Anthropic's skill-creator](https://github.com/an
 
 ### File Injection
 
-When a test case includes `files`, skill-lint reads each file (relative to the skill directory) and appends their contents to the prompt. This lets you test skills against real code or data without embedding it in the prompt string:
+When a test case includes `files`, skill-eval reads each file (relative to the skill directory) and appends their contents to the prompt. This lets you test skills against real code or data without embedding it in the prompt string:
 
 ```json
 {
@@ -177,7 +177,7 @@ For more control over evaluation, you can define multiple graders per test case 
     {
       "type": "script",
       "weight": 0.1,
-      "command": "echo $SKILL_LINT_OUTPUT | python check_format.py"
+      "command": "echo $SKILL_EVAL_OUTPUT | python check_format.py"
     }
   ]
 }
@@ -193,7 +193,7 @@ When `graders` is present, the final score is the weighted average of all grader
 | `llm_rubric` | LLM-as-judge evaluates against the `expected` behavior | 0.0-1.0 from the LLM judge |
 | `script` | Runs a shell command. Exit 0 = pass. Stdout can be a score or structured JSON | Exit code + stdout output |
 
-The `script` grader receives the agent's output via the `SKILL_LINT_OUTPUT` environment variable.
+The `script` grader receives the agent's output via the `SKILL_EVAL_OUTPUT` environment variable.
 
 ### Structured Script Grader Output
 
@@ -231,14 +231,14 @@ Use `eval_preset` in your config for common trial strategies:
 | `regression` | 25 | High-confidence regression detection |
 
 ```yaml
-# .skill-lint.yml
+# .skill-eval.yml
 eval_preset: smoke
 ```
 
 Or via the GitHub Action input:
 
 ```yaml
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
   with:
     eval_preset: reliable
 ```

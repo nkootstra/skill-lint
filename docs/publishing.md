@@ -1,6 +1,6 @@
 # Publishing to GitHub Marketplace
 
-This guide covers how to publish Skill Lint as a GitHub Marketplace Action.
+This guide covers how to publish Skill Eval as a GitHub Marketplace Action.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Go to **Settings > General > Danger Zone > Change repository visibility** and se
 Ensure `action.yml` has the required Marketplace fields:
 
 ```yaml
-name: "Skill Lint"
+name: "Skill Eval"
 description: "Evaluate, benchmark, and refine agent skills..."
 author: "nkootstra"
 branding:
@@ -54,12 +54,12 @@ git push origin v1.0.0
 5. Fill in the release title and notes
 6. Click **Publish release**
 
-The release workflow will automatically update the major version tag (`v1`) to point to this release, so users can pin to `nkootstra/skill-lint@v1`.
+The release workflow will automatically update the major version tag (`v1`) to point to this release, so users can pin to `nkootstra/skill-eval@v1`.
 
 ### 3. Verify on Marketplace
 
 After publishing, your action will be visible at:
-`https://github.com/marketplace/actions/skill-lint`
+`https://github.com/marketplace/actions/skill-eval`
 
 ## Releasing Updates
 
@@ -93,18 +93,18 @@ Users reference the action as:
 
 ```yaml
 # Pin to major version (recommended — gets minor/patch updates)
-- uses: nkootstra/skill-lint@v1
+- uses: nkootstra/skill-eval@v1
 
 # Pin to exact version
-- uses: nkootstra/skill-lint@v1.0.0
+- uses: nkootstra/skill-eval@v1.0.0
 
 # Always latest (not recommended for production)
-- uses: nkootstra/skill-lint@main
+- uses: nkootstra/skill-eval@main
 ```
 
 ## Marketplace Categories
 
-Good categories for Skill Lint:
+Good categories for Skill Eval:
 
 - **Primary**: Code quality
 - **Secondary**: Testing or Continuous integration

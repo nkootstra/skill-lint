@@ -1,5 +1,5 @@
-# Skill Lint Configuration
-# Copy this file to .skill-lint.yml in your repository root
+# Skill Eval Configuration
+# Copy this file to .skill-eval.yml in your repository root
 
 # Where to find skill files (relative to repo root)
 # Default layout: skills/{skill-name}/SKILL.md

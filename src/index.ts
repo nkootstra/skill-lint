@@ -10,8 +10,8 @@ import { collectSecrets, redactSecrets } from "./utils/sanitize.js";
 
 async function run(): Promise<void> {
   // Load config
-  const configPath = core.getInput("config_path") || ".skill-lint.yml";
-  const configResult = loadConfig(configPath);
+  const configPath = core.getInput("config_path") || ".skill-eval.yml";
+  const configResult = loadConfig(configPath, ".skill-lint.yml");
 
   if (configResult.isErr()) {
     core.setFailed(configResult.error.message);

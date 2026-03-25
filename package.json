@@ -1,5 +1,5 @@
 {
-  "name": "skill-lint",
+  "name": "skill-eval",
   "version": "1.0.0",
   "description": "GitHub Action that evaluates, benchmarks, and refines agent skills in PRs",
   "type": "module",
@@ -13,7 +13,7 @@
   },
   "keywords": [
     "github-action",
-    "skill-lint",
+    "skill-eval",
     "agent-skills",
     "evaluation",
     "llm"
