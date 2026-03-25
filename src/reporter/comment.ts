@@ -35,7 +35,16 @@ export function formatComment(
 
   const hasTrials = results.some((r) => r.benchmark.trials_per_test && r.benchmark.trials_per_test > 1);
 
+  const totalSecurityIssues = results.reduce(
+    (sum, r) => sum + r.lint_issues.filter((i) => i.rule.startsWith("security-")).length,
+    0,
+  );
+
   let summaryLine = `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
+
+  if (totalSecurityIssues > 0) {
+    summaryLine += ` | :shield: **${totalSecurityIssues}** security issue(s)`;
+  }
 
   if (hasTrials) {
     const trialsCount = results[0]?.benchmark.trials_per_test ?? 1;
@@ -51,10 +60,26 @@ export function formatComment(
       "",
     );
 
+    // Security issues (shown separately and prominently)
+    const securityIssues = result.lint_issues.filter((i) => i.rule.startsWith("security-"));
+    const lintOnlyIssues = result.lint_issues.filter((i) => !i.rule.startsWith("security-"));
+
+    if (securityIssues.length > 0) {
+      parts.push("#### :shield: Security Issues", "");
+      for (const issue of securityIssues) {
+        const label = issue.severity === "error" ? "BLOCKED" : "Warning";
+        parts.push(`- **${label}:** ${issue.message}`);
+        if (issue.suggestion) {
+          parts.push(`  - ${issue.suggestion}`);
+        }
+      }
+      parts.push("");
+    }
+
     // Lint issues
-    if (result.lint_issues.length > 0) {
+    if (lintOnlyIssues.length > 0) {
       parts.push("#### Lint Issues", "");
-      for (const issue of result.lint_issues) {
+      for (const issue of lintOnlyIssues) {
         const icon =
           issue.severity === "error"
             ? "**Error:**"
@@ -67,7 +92,7 @@ export function formatComment(
         }
       }
       parts.push("");
-    } else {
+    } else if (securityIssues.length === 0) {
       parts.push("**Lint:** No issues found", "");
     }
 

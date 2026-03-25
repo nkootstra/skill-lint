@@ -80,6 +80,10 @@ export const configSchema = z.object({
     .max(50)
     .default(1)
     .describe("Number of trials per eval test case for pass@k/pass^k metrics (1 = no multi-trial)"),
+  security_check: z
+    .boolean()
+    .default(true)
+    .describe("Run security scanner to detect malicious patterns in skills before linting"),
   redact_secrets: z
     .boolean()
     .default(true)

@@ -12435,7 +12435,7 @@ module.exports = Schema.DEFAULT = new Schema({
   ],
   explicit: [
     __nccwpck_require__(1775),
-    __nccwpck_require__(5013),
+    __nccwpck_require__(7394),
     __nccwpck_require__(9531)
   ]
 });
@@ -13192,7 +13192,7 @@ module.exports = new Type('tag:yaml.org,2002:js/function', {
 
 /***/ }),
 
-/***/ 5013:
+/***/ 7394:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
@@ -56541,6 +56541,9 @@ const configSchema = objectType({
         .max(50)
         .default(1)
         .describe("Number of trials per eval test case for pass@k/pass^k metrics (1 = no multi-trial)"),
+    security_check: booleanType()
+        .default(true)
+        .describe("Run security scanner to detect malicious patterns in skills before linting"),
     redact_secrets: booleanType()
         .default(true)
         .describe("Auto-redact API keys and secrets from PR comments and outputs"),
@@ -57790,6 +57793,152 @@ Only return JSON.`;
     }));
 }
 
+;// CONCATENATED MODULE: ./src/evaluator/security.ts
+
+
+function findPatternInContent(content, pattern, source) {
+    const lines = content.split("\n");
+    const findings = [];
+    for (let i = 0; i < lines.length; i++) {
+        pattern.lastIndex = 0;
+        if (pattern.test(lines[i])) {
+            findings.push({
+                line: i + 1,
+                context: source
+                    ? `[${source}] ${lines[i].trim().substring(0, 100)}`
+                    : lines[i].trim().substring(0, 100),
+                source,
+            });
+        }
+    }
+    return findings;
+}
+function scanAllContent(skill, pattern) {
+    const findings = [];
+    findings.push(...findPatternInContent(skill.rawContent, pattern));
+    for (const ref of skill.references) {
+        findings.push(...findPatternInContent(ref.content, pattern, ref.name));
+    }
+    return findings;
+}
+const SECURITY_RULES = [
+    {
+        id: "security-shell-exec",
+        severity: "error",
+        message: "Skill contains shell execution directive",
+        suggestion: "Remove shell execution directives (! bash, ! sh, ! ./) — these can execute arbitrary code during skill loading",
+        check: (skill) => scanAllContent(skill, /!\s*(bash|sh|zsh|\.\/|\/bin\/|\/usr\/bin\/)/gi),
+    },
+    {
+        id: "security-exfiltration",
+        severity: "error",
+        message: "Skill contains potential data exfiltration command",
+        suggestion: "Remove curl/wget/fetch calls to external URLs — these can leak sensitive data to remote servers",
+        check: (skill) => {
+            const curlWget = scanAllContent(skill, /\b(curl|wget)\s+(-[a-zA-Z]*\s+)*https?:\/\//gi);
+            const fetch = scanAllContent(skill, /fetch\s*\(\s*['"`]https?:\/\//gi);
+            return [...curlWget, ...fetch];
+        },
+    },
+    {
+        id: "security-config-poison",
+        severity: "error",
+        message: "Skill attempts to modify agent configuration files",
+        suggestion: "Do not write to CLAUDE.md, AGENTS.md, or .cursorrules — this is a memory/config poisoning attack vector",
+        check: (skill) => scanAllContent(skill, /(?:write|append|modify|create|overwrite|echo\s.*>>?|cat\s.*>>?)\s.*(?:CLAUDE\.md|AGENTS\.md|\.cursorrules|\.claude\/)/gi),
+    },
+    {
+        id: "security-permission-bypass",
+        severity: "error",
+        message: "Skill instructs disabling security controls",
+        suggestion: "Never disable permission checks or sandbox protections — these exist to prevent malicious code execution",
+        check: (skill) => scanAllContent(skill, /(--dangerously-skip-permissions|--no-verify|--trust-all|dangerouslyDisableSandbox|allowedTools:\s*\*)/gi),
+    },
+    {
+        id: "security-sensitive-files",
+        severity: "warning",
+        message: "Skill references sensitive file paths",
+        suggestion: "Avoid referencing SSH keys, AWS credentials, .env files, or other secrets — these could be exfiltrated",
+        check: (skill) => scanAllContent(skill, /(?:~\/\.ssh|~\/\.aws|~\/\.gnupg|\/etc\/passwd|\/etc\/shadow|\.env\b|credentials\.json|\.npmrc|\.pypirc|id_rsa)/gi),
+    },
+    {
+        id: "security-symlink-escape",
+        severity: "error",
+        message: "Skill reference file is a symlink pointing outside the skill directory",
+        suggestion: "Remove symlinks that escape the skill directory — these can expose sensitive files like SSH keys",
+        check: (skill) => {
+            const findings = [];
+            const skillDir = external_path_.dirname(skill.filePath);
+            for (const ref of skill.references) {
+                try {
+                    const stat = fsOps.lstatSync(ref.filePath);
+                    if (stat.isSymbolicLink()) {
+                        const resolved = fsOps.realpathSync(ref.filePath);
+                        const resolvedSkillDir = fsOps.realpathSync(skillDir);
+                        if (!resolved.startsWith(resolvedSkillDir + external_path_.sep) && resolved !== resolvedSkillDir) {
+                            findings.push({
+                                context: `Symlink ${ref.name} -> ${resolved}`,
+                                source: ref.name,
+                            });
+                        }
+                    }
+                }
+                catch {
+                    // File doesn't exist or can't be read — skip
+                }
+            }
+            return findings;
+        },
+    },
+    {
+        id: "security-encoded-payload",
+        severity: "warning",
+        message: "Skill contains a suspiciously long encoded string",
+        suggestion: "Long base64 strings can hide malicious payloads — decode and review, or remove if unnecessary",
+        check: (skill) => {
+            const base64Long = scanAllContent(skill, /[A-Za-z0-9+/]{100,}={0,2}/g);
+            const base64Decode = scanAllContent(skill, /(?:atob\s*\(|Buffer\.from\s*\(.*['"]base64['"]|base64\s+-d)/gi);
+            return [...base64Long, ...base64Decode];
+        },
+    },
+    {
+        id: "security-suspicious-install",
+        severity: "warning",
+        message: "Skill contains package installation commands",
+        suggestion: "Package install commands can execute arbitrary code via postinstall hooks — review dependencies carefully",
+        check: (skill) => scanAllContent(skill, /\b(npm\s+install|pip\s+install|yarn\s+add|postinstall|preinstall)\b/gi),
+    },
+];
+/** Filesystem operations, extracted for testability. */
+const fsOps = {
+    lstatSync: (p) => external_fs_.lstatSync(p),
+    realpathSync: (p) => external_fs_.realpathSync(p),
+};
+/**
+ * Scans a skill for security issues based on known attack patterns
+ * from the "Dangerous Skills" research.
+ *
+ * Returns findings as LintIssue[] with "security-" prefixed rule IDs.
+ */
+function scanSkillSecurity(skill) {
+    const issues = [];
+    for (const rule of SECURITY_RULES) {
+        const findings = rule.check(skill);
+        for (const finding of findings) {
+            issues.push({
+                rule: rule.id,
+                severity: rule.severity,
+                message: finding.context
+                    ? `${rule.message}: ${finding.context}`
+                    : rule.message,
+                line: finding.line,
+                suggestion: rule.suggestion,
+            });
+        }
+    }
+    return issues;
+}
+
 ;// CONCATENATED MODULE: ./src/evaluator/suggester.ts
 
 
@@ -57878,6 +58027,7 @@ function generateFallbackSuggestions(lintIssues, failedEvals) {
 
 
 
+
 async function runPipeline(options) {
     const { config, provider, changedFiles, baseBranch } = options;
     core.info(`Scanning for skill files in: ${config.skills_path}`);
@@ -57898,39 +58048,54 @@ async function runPipeline(options) {
 async function evaluateSkill(skillFile, evalDetected, config, provider, baseBranch) {
     const skill = parseSkill(skillFile);
     core.info(`\nEvaluating: ${skill.metadata.title} (${skill.relativePath})`);
-    // Step 1: Lint
-    core.info("  [1/5] Linting...");
+    // Step 1: Security scan
+    let securityIssues = [];
+    if (config.security_check) {
+        core.info("  [1/6] Security scan...");
+        securityIssues = scanSkillSecurity(skill);
+        if (securityIssues.length > 0) {
+            core.warning(`  Found ${securityIssues.length} security issue(s)`);
+        }
+        else {
+            core.info("  No security issues found");
+        }
+    }
+    else {
+        core.info("  [1/6] Security scan skipped (disabled)");
+    }
+    // Step 2: Lint
+    core.info("  [2/6] Linting...");
     const lintIssues = await lintSkill(skill, config.rubric, provider);
     core.info(`  Found ${lintIssues.length} lint issue(s)`);
-    // Step 2: Run evals
+    // Step 3: Run evals
     let evalResults = [];
     const trials = config.eval_trials;
     if (evalDetected) {
-        core.info(`  [2/5] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
+        core.info(`  [3/6] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
         const evalFile = parseEvalFile(evalDetected);
         evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals, trials);
         core.info(`  Evals: ${evalResults.filter((r) => r.passed).length}/${evalResults.length} passed`);
     }
     else {
-        core.info("  [2/5] No eval file, skipping");
+        core.info("  [3/6] No eval file, skipping");
     }
-    // Step 3: Benchmark
-    core.info("  [3/5] Benchmarking...");
+    // Step 4: Benchmark
+    core.info("  [4/6] Benchmarking...");
     const benchmark = computeBenchmark(skill.metadata.title, evalResults, trials);
-    // Step 4: A/B comparison
+    // Step 5: A/B comparison
     let comparison = null;
     if (evalResults.length > 0) {
-        core.info("  [4/5] A/B comparison...");
+        core.info("  [5/6] A/B comparison...");
         comparison = await compareWithBase(skillFile.absolutePath, benchmark, evalResults, config, provider, baseBranch);
     }
     else {
-        core.info("  [4/5] Skipping A/B (no evals)");
+        core.info("  [5/6] Skipping A/B (no evals)");
     }
-    // Step 5: Suggestions
-    core.info("  [5/5] Generating suggestions...");
+    // Step 6: Suggestions
+    core.info("  [6/6] Generating suggestions...");
     const suggestions = await generateSuggestions(skill, lintIssues, evalResults, provider);
     core.info(`  ${suggestions.length} suggestion(s)`);
-    return { skill, lint_issues: lintIssues, eval_results: evalResults, benchmark, comparison, suggestions };
+    return { skill, lint_issues: [...securityIssues, ...lintIssues], eval_results: evalResults, benchmark, comparison, suggestions };
 }
 
 ;// CONCATENATED MODULE: ./node_modules/@anthropic-ai/sdk/version.mjs
@@ -69936,7 +70101,11 @@ function formatComment(results, passed) {
     const passedEvals = results.reduce((sum, r) => sum + r.eval_results.filter((e) => e.passed).length, 0);
     const totalSuggestions = results.reduce((sum, r) => sum + r.suggestions.length, 0);
     const hasTrials = results.some((r) => r.benchmark.trials_per_test && r.benchmark.trials_per_test > 1);
+    const totalSecurityIssues = results.reduce((sum, r) => sum + r.lint_issues.filter((i) => i.rule.startsWith("security-")).length, 0);
     let summaryLine = `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
+    if (totalSecurityIssues > 0) {
+        summaryLine += ` | :shield: **${totalSecurityIssues}** security issue(s)`;
+    }
     if (hasTrials) {
         const trialsCount = results[0]?.benchmark.trials_per_test ?? 1;
         summaryLine += ` | **${trialsCount}** trial(s) per test`;
@@ -69945,10 +70114,24 @@ function formatComment(results, passed) {
     // Per-skill results
     for (const result of results) {
         parts.push(`### ${result.skill.metadata.title} (\`${result.skill.relativePath}\`)`, "");
+        // Security issues (shown separately and prominently)
+        const securityIssues = result.lint_issues.filter((i) => i.rule.startsWith("security-"));
+        const lintOnlyIssues = result.lint_issues.filter((i) => !i.rule.startsWith("security-"));
+        if (securityIssues.length > 0) {
+            parts.push("#### :shield: Security Issues", "");
+            for (const issue of securityIssues) {
+                const label = issue.severity === "error" ? "BLOCKED" : "Warning";
+                parts.push(`- **${label}:** ${issue.message}`);
+                if (issue.suggestion) {
+                    parts.push(`  - ${issue.suggestion}`);
+                }
+            }
+            parts.push("");
+        }
         // Lint issues
-        if (result.lint_issues.length > 0) {
+        if (lintOnlyIssues.length > 0) {
             parts.push("#### Lint Issues", "");
-            for (const issue of result.lint_issues) {
+            for (const issue of lintOnlyIssues) {
                 const icon = issue.severity === "error"
                     ? "**Error:**"
                     : issue.severity === "warning"
@@ -69961,7 +70144,7 @@ function formatComment(results, passed) {
             }
             parts.push("");
         }
-        else {
+        else if (securityIssues.length === 0) {
             parts.push("**Lint:** No issues found", "");
         }
         // Eval results
