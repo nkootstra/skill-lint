@@ -12435,7 +12435,7 @@ module.exports = Schema.DEFAULT = new Schema({
   ],
   explicit: [
     __nccwpck_require__(1775),
-    __nccwpck_require__(5013),
+    __nccwpck_require__(7394),
     __nccwpck_require__(9531)
   ]
 });
@@ -13192,7 +13192,7 @@ module.exports = new Type('tag:yaml.org,2002:js/function', {
 
 /***/ }),
 
-/***/ 5013:
+/***/ 7394:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
@@ -56489,6 +56489,9 @@ const rubricSchema = objectType({
     require_triggers: booleanType()
         .default(true)
         .describe("Skill must define trigger conditions"),
+    require_security: booleanType()
+        .default(true)
+        .describe("Run security checks to detect malicious patterns in skills"),
     max_instruction_tokens: numberType()
         .optional()
         .describe("Maximum token count for skill instructions"),
@@ -57790,6 +57793,194 @@ Only return JSON.`;
     }));
 }
 
+;// CONCATENATED MODULE: external "node:fs"
+const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs");
+var external_node_fs_default = /*#__PURE__*/__nccwpck_require__.n(external_node_fs_namespaceObject);
+;// CONCATENATED MODULE: external "node:path"
+const external_node_path_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
+var external_node_path_default = /*#__PURE__*/__nccwpck_require__.n(external_node_path_namespaceObject);
+;// CONCATENATED MODULE: ./src/evaluator/security.ts
+
+
+// ---------------------------------------------------------------------------
+// Pattern helpers
+// ---------------------------------------------------------------------------
+const SHELL_EXEC_PATTERN = /^\s*!\s*(bash|sh|\.\/|\/bin\/)/i;
+const EXFILTRATION_PATTERN = /\b(curl|wget)\b.*https?:\/\/|fetch\s*\(\s*['"`]https?:\/\//i;
+const PERMISSION_BYPASS_PATTERN = /--dangerously-skip-permissions|dangerouslyDisableSandbox/;
+const SENSITIVE_FILES_PATTERN = /~\/\.ssh\/|~\/\.aws\/|\.env\b|credentials\.json\b|id_rsa\b|\.npmrc\b|\.netrc\b/i;
+const ENCODED_PAYLOAD_PATTERN = /[A-Za-z0-9+/=]{100,}/;
+const SUSPICIOUS_INSTALL_PATTERN = /\bnpm\s+install\b|\bpip\s+install\b|\bpostinstall\b|\bpreinstall\b/i;
+// Config-poison: a line must contain both a write-like operator AND a config path
+const CONFIG_PATHS = [
+    /~\/\.claude\/CLAUDE\.md/,
+    /AGENTS\.md/,
+    /\.cursorrules/,
+    /~\/\.claude\/settings/,
+    /memory\.json/,
+];
+const WRITE_OPERATORS = [/>>/, />/, /\btee\b/, /\becho\b.*>/, /\bcat\b.*>/, /\bwrite\b/i];
+// ---------------------------------------------------------------------------
+// Scanning helpers
+// ---------------------------------------------------------------------------
+function scanLines(content, pattern, rule, source) {
+    const issues = [];
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+        if (pattern.test(lines[i])) {
+            issues.push({
+                rule: rule.id,
+                severity: rule.severity,
+                message: `${rule.description} (${source}, line ${i + 1})`,
+                line: i + 1,
+                suggestion: `Review this line for potential security risks`,
+            });
+        }
+    }
+    return issues;
+}
+function scanContent(content, rule, source) {
+    if (!rule.pattern)
+        return [];
+    return scanLines(content, rule.pattern, rule, source);
+}
+// ---------------------------------------------------------------------------
+// Custom rule checks
+// ---------------------------------------------------------------------------
+function checkConfigPoison(skill) {
+    const issues = [];
+    const scan = (content, source) => {
+        const lines = content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const hasConfigPath = CONFIG_PATHS.some((p) => p.test(line));
+            const hasWriteOp = WRITE_OPERATORS.some((p) => p.test(line));
+            if (hasConfigPath && hasWriteOp) {
+                issues.push({
+                    rule: "security-config-poison",
+                    severity: "error",
+                    message: `Potential config/memory poisoning: writes to agent config file (${source}, line ${i + 1})`,
+                    line: i + 1,
+                    suggestion: "Skills should not modify global agent config or memory files",
+                });
+            }
+        }
+    };
+    scan(skill.rawContent, "skill");
+    for (const ref of skill.references) {
+        scan(ref.content, ref.name);
+    }
+    return issues;
+}
+function checkSymlinkEscape(skill) {
+    const issues = [];
+    const skillDir = external_node_path_default().dirname(skill.filePath);
+    for (const ref of skill.references) {
+        try {
+            const stat = external_node_fs_default().lstatSync(ref.filePath);
+            if (stat.isSymbolicLink()) {
+                const realPath = external_node_fs_default().realpathSync(ref.filePath);
+                const relative = external_node_path_default().relative(skillDir, realPath);
+                if (relative.startsWith("..")) {
+                    issues.push({
+                        rule: "security-symlink-escape",
+                        severity: "error",
+                        message: `Reference file "${ref.name}" is a symlink pointing outside the skill directory (resolves to ${realPath})`,
+                        suggestion: "Remove symlinks that point outside the skill directory; they can be used to exfiltrate sensitive files",
+                    });
+                }
+            }
+        }
+        catch {
+            // File may not exist on disk (e.g. in tests) -- skip silently
+        }
+    }
+    return issues;
+}
+// ---------------------------------------------------------------------------
+// Rule definitions
+// ---------------------------------------------------------------------------
+const SECURITY_RULES = [
+    {
+        id: "security-shell-exec",
+        severity: "error",
+        description: "Shell execution directive detected (! bash/sh)",
+        pattern: SHELL_EXEC_PATTERN,
+    },
+    {
+        id: "security-exfiltration",
+        severity: "error",
+        description: "Potential data exfiltration via curl/wget/fetch to external URL",
+        pattern: EXFILTRATION_PATTERN,
+    },
+    {
+        id: "security-config-poison",
+        severity: "error",
+        description: "Config/memory poisoning",
+        check: checkConfigPoison,
+    },
+    {
+        id: "security-permission-bypass",
+        severity: "error",
+        description: "Permission/safety bypass flag detected",
+        pattern: PERMISSION_BYPASS_PATTERN,
+    },
+    {
+        id: "security-sensitive-files",
+        severity: "warning",
+        description: "Reference to sensitive file or directory",
+        pattern: SENSITIVE_FILES_PATTERN,
+    },
+    {
+        id: "security-symlink-escape",
+        severity: "error",
+        description: "Symlink escape",
+        check: checkSymlinkEscape,
+    },
+    {
+        id: "security-encoded-payload",
+        severity: "warning",
+        description: "Suspiciously long base64-encoded string detected",
+        pattern: ENCODED_PAYLOAD_PATTERN,
+    },
+    {
+        id: "security-suspicious-install",
+        severity: "warning",
+        description: "Package install command or lifecycle hook detected",
+        pattern: SUSPICIOUS_INSTALL_PATTERN,
+    },
+];
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
+/**
+ * Scan a skill for security issues. Returns LintIssue[] with "security-"
+ * prefixed rule IDs so they integrate with the existing lint pipeline.
+ */
+function scanSkillSecurity(skill) {
+    const issues = [];
+    for (const rule of SECURITY_RULES) {
+        if (rule.check) {
+            issues.push(...rule.check(skill));
+            continue;
+        }
+        // Pattern-based rules: scan rawContent + reference contents
+        issues.push(...scanContent(skill.rawContent, rule, "skill"));
+        for (const ref of skill.references) {
+            issues.push(...scanContent(ref.content, rule, ref.name));
+        }
+    }
+    // Deduplicate by rule + line + message
+    const seen = new Set();
+    return issues.filter((issue) => {
+        const key = `${issue.rule}:${issue.line ?? ""}:${issue.message}`;
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
+}
+
 ;// CONCATENATED MODULE: ./src/evaluator/suggester.ts
 
 
@@ -57878,6 +58069,7 @@ function generateFallbackSuggestions(lintIssues, failedEvals) {
 
 
 
+
 async function runPipeline(options) {
     const { config, provider, changedFiles, baseBranch } = options;
     core.info(`Scanning for skill files in: ${config.skills_path}`);
@@ -57898,39 +58090,54 @@ async function runPipeline(options) {
 async function evaluateSkill(skillFile, evalDetected, config, provider, baseBranch) {
     const skill = parseSkill(skillFile);
     core.info(`\nEvaluating: ${skill.metadata.title} (${skill.relativePath})`);
-    // Step 1: Lint
-    core.info("  [1/5] Linting...");
+    // Step 1: Security scan
+    let securityIssues = [];
+    if (config.rubric.require_security) {
+        core.info("  [1/6] Security scan...");
+        securityIssues = scanSkillSecurity(skill);
+        if (securityIssues.length > 0) {
+            core.info(`  Found ${securityIssues.length} security issue(s)`);
+        }
+        else {
+            core.info("  No security issues found");
+        }
+    }
+    else {
+        core.info("  [1/6] Security scan (disabled)");
+    }
+    // Step 2: Lint
+    core.info("  [2/6] Linting...");
     const lintIssues = await lintSkill(skill, config.rubric, provider);
     core.info(`  Found ${lintIssues.length} lint issue(s)`);
-    // Step 2: Run evals
+    // Step 3: Run evals
     let evalResults = [];
     const trials = config.eval_trials;
     if (evalDetected) {
-        core.info(`  [2/5] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
+        core.info(`  [3/6] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
         const evalFile = parseEvalFile(evalDetected);
         evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals, trials);
         core.info(`  Evals: ${evalResults.filter((r) => r.passed).length}/${evalResults.length} passed`);
     }
     else {
-        core.info("  [2/5] No eval file, skipping");
+        core.info("  [3/6] No eval file, skipping");
     }
-    // Step 3: Benchmark
-    core.info("  [3/5] Benchmarking...");
+    // Step 4: Benchmark
+    core.info("  [4/6] Benchmarking...");
     const benchmark = computeBenchmark(skill.metadata.title, evalResults, trials);
-    // Step 4: A/B comparison
+    // Step 5: A/B comparison
     let comparison = null;
     if (evalResults.length > 0) {
-        core.info("  [4/5] A/B comparison...");
+        core.info("  [5/6] A/B comparison...");
         comparison = await compareWithBase(skillFile.absolutePath, benchmark, evalResults, config, provider, baseBranch);
     }
     else {
-        core.info("  [4/5] Skipping A/B (no evals)");
+        core.info("  [5/6] Skipping A/B (no evals)");
     }
-    // Step 5: Suggestions
-    core.info("  [5/5] Generating suggestions...");
-    const suggestions = await generateSuggestions(skill, lintIssues, evalResults, provider);
+    // Step 6: Suggestions
+    core.info("  [6/6] Generating suggestions...");
+    const suggestions = await generateSuggestions(skill, [...securityIssues, ...lintIssues], evalResults, provider);
     core.info(`  ${suggestions.length} suggestion(s)`);
-    return { skill, lint_issues: lintIssues, eval_results: evalResults, benchmark, comparison, suggestions };
+    return { skill, lint_issues: [...securityIssues, ...lintIssues], eval_results: evalResults, benchmark, comparison, suggestions };
 }
 
 ;// CONCATENATED MODULE: ./node_modules/@anthropic-ai/sdk/version.mjs
@@ -58148,8 +58355,6 @@ class FormData_FormData {
 var agentkeepalive = __nccwpck_require__(3873);
 // EXTERNAL MODULE: ./node_modules/abort-controller/dist/abort-controller.js
 var abort_controller = __nccwpck_require__(7413);
-;// CONCATENATED MODULE: external "node:fs"
-const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs");
 ;// CONCATENATED MODULE: ./node_modules/form-data-encoder/lib/esm/util/createBoundary.js
 const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
 function createBoundary() {
@@ -69931,12 +70136,17 @@ function formatComment(results, passed) {
     ];
     // Summary
     const totalSkills = results.length;
-    const totalIssues = results.reduce((sum, r) => sum + r.lint_issues.length, 0);
+    const totalSecurityIssues = results.reduce((sum, r) => sum + r.lint_issues.filter((i) => i.rule.startsWith("security-")).length, 0);
+    const totalLintIssues = results.reduce((sum, r) => sum + r.lint_issues.filter((i) => !i.rule.startsWith("security-")).length, 0);
     const totalEvals = results.reduce((sum, r) => sum + r.eval_results.length, 0);
     const passedEvals = results.reduce((sum, r) => sum + r.eval_results.filter((e) => e.passed).length, 0);
     const totalSuggestions = results.reduce((sum, r) => sum + r.suggestions.length, 0);
     const hasTrials = results.some((r) => r.benchmark.trials_per_test && r.benchmark.trials_per_test > 1);
-    let summaryLine = `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
+    let summaryLine = `**${totalSkills}** skill(s) evaluated`;
+    if (totalSecurityIssues > 0) {
+        summaryLine += ` | **${totalSecurityIssues}** security issue(s)`;
+    }
+    summaryLine += ` | **${totalLintIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
     if (hasTrials) {
         const trialsCount = results[0]?.benchmark.trials_per_test ?? 1;
         summaryLine += ` | **${trialsCount}** trial(s) per test`;
@@ -69945,10 +70155,28 @@ function formatComment(results, passed) {
     // Per-skill results
     for (const result of results) {
         parts.push(`### ${result.skill.metadata.title} (\`${result.skill.relativePath}\`)`, "");
+        // Security issues (separate prominent section)
+        const securityIssues = result.lint_issues.filter((i) => i.rule.startsWith("security-"));
+        const lintOnlyIssues = result.lint_issues.filter((i) => !i.rule.startsWith("security-"));
+        if (securityIssues.length > 0) {
+            parts.push("#### :shield: Security Issues", "");
+            for (const issue of securityIssues) {
+                const icon = issue.severity === "error"
+                    ? ":rotating_light: **Error:**"
+                    : issue.severity === "warning"
+                        ? ":warning: **Warning:**"
+                        : "**Info:**";
+                parts.push(`- ${icon} \`${issue.rule}\` ${issue.message}`);
+                if (issue.suggestion) {
+                    parts.push(`  - Suggestion: ${issue.suggestion}`);
+                }
+            }
+            parts.push("");
+        }
         // Lint issues
-        if (result.lint_issues.length > 0) {
+        if (lintOnlyIssues.length > 0) {
             parts.push("#### Lint Issues", "");
-            for (const issue of result.lint_issues) {
+            for (const issue of lintOnlyIssues) {
                 const icon = issue.severity === "error"
                     ? "**Error:**"
                     : issue.severity === "warning"
@@ -69960,6 +70188,9 @@ function formatComment(results, passed) {
                 }
             }
             parts.push("");
+        }
+        else if (securityIssues.length === 0) {
+            parts.push("**Lint:** No issues found", "");
         }
         else {
             parts.push("**Lint:** No issues found", "");

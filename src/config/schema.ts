@@ -21,6 +21,10 @@ export const rubricSchema = z.object({
     .boolean()
     .default(true)
     .describe("Skill must define trigger conditions"),
+  require_security: z
+    .boolean()
+    .default(true)
+    .describe("Run security checks to detect malicious patterns in skills"),
   max_instruction_tokens: z
     .number()
     .optional()

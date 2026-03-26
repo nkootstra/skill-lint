@@ -16,8 +16,12 @@ export function formatComment(
 
   // Summary
   const totalSkills = results.length;
-  const totalIssues = results.reduce(
-    (sum, r) => sum + r.lint_issues.length,
+  const totalSecurityIssues = results.reduce(
+    (sum, r) => sum + r.lint_issues.filter((i) => i.rule.startsWith("security-")).length,
+    0,
+  );
+  const totalLintIssues = results.reduce(
+    (sum, r) => sum + r.lint_issues.filter((i) => !i.rule.startsWith("security-")).length,
     0,
   );
   const totalEvals = results.reduce(
@@ -35,7 +39,13 @@ export function formatComment(
 
   const hasTrials = results.some((r) => r.benchmark.trials_per_test && r.benchmark.trials_per_test > 1);
 
-  let summaryLine = `**${totalSkills}** skill(s) evaluated | **${totalIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
+  let summaryLine = `**${totalSkills}** skill(s) evaluated`;
+
+  if (totalSecurityIssues > 0) {
+    summaryLine += ` | **${totalSecurityIssues}** security issue(s)`;
+  }
+
+  summaryLine += ` | **${totalLintIssues}** lint issue(s) | **${passedEvals}/${totalEvals}** eval(s) passed | **${totalSuggestions}** suggestion(s)`;
 
   if (hasTrials) {
     const trialsCount = results[0]?.benchmark.trials_per_test ?? 1;
@@ -51,10 +61,31 @@ export function formatComment(
       "",
     );
 
+    // Security issues (separate prominent section)
+    const securityIssues = result.lint_issues.filter((i) => i.rule.startsWith("security-"));
+    const lintOnlyIssues = result.lint_issues.filter((i) => !i.rule.startsWith("security-"));
+
+    if (securityIssues.length > 0) {
+      parts.push("#### :shield: Security Issues", "");
+      for (const issue of securityIssues) {
+        const icon =
+          issue.severity === "error"
+            ? ":rotating_light: **Error:**"
+            : issue.severity === "warning"
+              ? ":warning: **Warning:**"
+              : "**Info:**";
+        parts.push(`- ${icon} \`${issue.rule}\` ${issue.message}`);
+        if (issue.suggestion) {
+          parts.push(`  - Suggestion: ${issue.suggestion}`);
+        }
+      }
+      parts.push("");
+    }
+
     // Lint issues
-    if (result.lint_issues.length > 0) {
+    if (lintOnlyIssues.length > 0) {
       parts.push("#### Lint Issues", "");
-      for (const issue of result.lint_issues) {
+      for (const issue of lintOnlyIssues) {
         const icon =
           issue.severity === "error"
             ? "**Error:**"
@@ -67,6 +98,8 @@ export function formatComment(
         }
       }
       parts.push("");
+    } else if (securityIssues.length === 0) {
+      parts.push("**Lint:** No issues found", "");
     } else {
       parts.push("**Lint:** No issues found", "");
     }

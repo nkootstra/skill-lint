@@ -4,11 +4,12 @@ import type { LLMProvider } from "../providers/types.js";
 import type { DetectedFile } from "../skills/detector.js";
 import { detectSkillFiles, pairSkillsWithEvals } from "../skills/detector.js";
 import { parseEvalFile, parseSkill } from "../skills/parser.js";
-import type { EvalResult, SkillEvaluationResult } from "../skills/types.js";
+import type { EvalResult, LintIssue, SkillEvaluationResult } from "../skills/types.js";
 import { computeBenchmark } from "./benchmarker.js";
 import { compareWithBase } from "./comparator.js";
 import { lintSkill } from "./linter.js";
 import { runEvals } from "./runner.js";
+import { scanSkillSecurity } from "./security.js";
 import { generateSuggestions } from "./suggester.js";
 
 export interface PipelineOptions {
@@ -51,40 +52,54 @@ async function evaluateSkill(
   const skill = parseSkill(skillFile);
   core.info(`\nEvaluating: ${skill.metadata.title} (${skill.relativePath})`);
 
-  // Step 1: Lint
-  core.info("  [1/5] Linting...");
+  // Step 1: Security scan
+  let securityIssues: LintIssue[] = [];
+  if (config.rubric.require_security) {
+    core.info("  [1/6] Security scan...");
+    securityIssues = scanSkillSecurity(skill);
+    if (securityIssues.length > 0) {
+      core.info(`  Found ${securityIssues.length} security issue(s)`);
+    } else {
+      core.info("  No security issues found");
+    }
+  } else {
+    core.info("  [1/6] Security scan (disabled)");
+  }
+
+  // Step 2: Lint
+  core.info("  [2/6] Linting...");
   const lintIssues = await lintSkill(skill, config.rubric, provider);
   core.info(`  Found ${lintIssues.length} lint issue(s)`);
 
-  // Step 2: Run evals
+  // Step 3: Run evals
   let evalResults: EvalResult[] = [];
   const trials = config.eval_trials;
   if (evalDetected) {
-    core.info(`  [2/5] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
+    core.info(`  [3/6] Running evaluations${trials > 1 ? ` (${trials} trials each)` : ""}...`);
     const evalFile = parseEvalFile(evalDetected);
     evalResults = await runEvals(skill, evalFile, provider, config.parallel_evals, trials);
     core.info(`  Evals: ${evalResults.filter((r) => r.passed).length}/${evalResults.length} passed`);
   } else {
-    core.info("  [2/5] No eval file, skipping");
+    core.info("  [3/6] No eval file, skipping");
   }
 
-  // Step 3: Benchmark
-  core.info("  [3/5] Benchmarking...");
+  // Step 4: Benchmark
+  core.info("  [4/6] Benchmarking...");
   const benchmark = computeBenchmark(skill.metadata.title, evalResults, trials);
 
-  // Step 4: A/B comparison
+  // Step 5: A/B comparison
   let comparison = null;
   if (evalResults.length > 0) {
-    core.info("  [4/5] A/B comparison...");
+    core.info("  [5/6] A/B comparison...");
     comparison = await compareWithBase(skillFile.absolutePath, benchmark, evalResults, config, provider, baseBranch);
   } else {
-    core.info("  [4/5] Skipping A/B (no evals)");
+    core.info("  [5/6] Skipping A/B (no evals)");
   }
 
-  // Step 5: Suggestions
-  core.info("  [5/5] Generating suggestions...");
-  const suggestions = await generateSuggestions(skill, lintIssues, evalResults, provider);
+  // Step 6: Suggestions
+  core.info("  [6/6] Generating suggestions...");
+  const suggestions = await generateSuggestions(skill, [...securityIssues, ...lintIssues], evalResults, provider);
   core.info(`  ${suggestions.length} suggestion(s)`);
 
-  return { skill, lint_issues: lintIssues, eval_results: evalResults, benchmark, comparison, suggestions };
+  return { skill, lint_issues: [...securityIssues, ...lintIssues], eval_results: evalResults, benchmark, comparison, suggestions };
 }

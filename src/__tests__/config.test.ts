@@ -135,4 +135,14 @@ describe("configSchema", () => {
     const result = configSchema.parse({ redact_secrets: false });
     expect(result.redact_secrets).toBe(false);
   });
+
+  it("should default require_security to true", () => {
+    const result = configSchema.parse({});
+    expect(result.rubric.require_security).toBe(true);
+  });
+
+  it("should allow disabling require_security", () => {
+    const result = configSchema.parse({ rubric: { require_security: false } });
+    expect(result.rubric.require_security).toBe(false);
+  });
 });

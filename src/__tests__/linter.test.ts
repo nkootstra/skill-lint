@@ -26,6 +26,7 @@ const defaultRubric: Rubric = {
   require_description: true,
   require_examples: false,
   require_triggers: true,
+  require_security: true,
   max_instruction_tokens: undefined,
   custom_prompts: {},
 };
